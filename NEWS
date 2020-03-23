@@ -34,7 +34,6 @@ OVN v20.06.0 - 08 Jun 2020
        managed by OVN.  See instructions in
        Documentation/tutorials/ovn-interconnection.rst.
 
-
 OVN v20.03.0 - 04 Feb 2020
 --------------------------
    - OVN was split out from the OVS repository and is now released

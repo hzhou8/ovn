@@ -11466,6 +11466,11 @@ static const char *rbac_chassis_update[] =
     {"nb_cfg", "external_ids", "encaps", "vtep_logical_switches",
      "other_config"};
 
+static const char *rbac_chassis_private_auth[] =
+    {"chassis_name"};
+static const char *rbac_chassis_private_update[] =
+    {"nb_cfg"};
+
 static const char *rbac_encap_auth[] =
     {"chassis_name"};
 static const char *rbac_encap_update[] =
@@ -11502,6 +11507,14 @@ static struct rbac_perm_cfg {
         .insdel = true,
         .update = rbac_chassis_update,
         .n_update = ARRAY_SIZE(rbac_chassis_update),
+        .row = NULL
+    },{
+        .table = "Chassis_Private",
+        .auth = rbac_chassis_private_auth,
+        .n_auth = ARRAY_SIZE(rbac_chassis_private_auth),
+        .insdel = true,
+        .update = rbac_chassis_private_update,
+        .n_update = ARRAY_SIZE(rbac_chassis_private_update),
         .row = NULL
     },{
         .table = "Encap",
@@ -11660,6 +11673,7 @@ check_and_update_rbac(struct northd_context *ctx)
 /* Updates the sb_cfg and hv_cfg columns in the northbound NB_Global table. */
 static void
 update_northbound_cfg(struct northd_context *ctx,
+                      struct ovsdb_idl_index *sbrec_chassis_by_name,
                       struct ovsdb_idl_loop *sb_loop)
 {
     /* Update northbound sb_cfg if appropriate. */
@@ -11672,12 +11686,25 @@ update_northbound_cfg(struct northd_context *ctx,
     /* Update northbound hv_cfg if appropriate. */
     if (nbg) {
         /* Find minimum nb_cfg among all chassis. */
-        const struct sbrec_chassis *chassis;
+        const struct sbrec_chassis_private *chassis_priv;
         int64_t hv_cfg = nbg->nb_cfg;
-        SBREC_CHASSIS_FOR_EACH (chassis, ctx->ovnsb_idl) {
-            if (!smap_get_bool(&chassis->other_config, "is-remote", false) &&
-                chassis->nb_cfg < hv_cfg) {
-                hv_cfg = chassis->nb_cfg;
+        SBREC_CHASSIS_PRIVATE_FOR_EACH (chassis_priv, ctx->ovnsb_idl) {
+            const struct sbrec_chassis *chassis =
+                chassis_lookup_by_name(sbrec_chassis_by_name,
+                                       chassis_priv->chassis_name);
+            if (chassis) {
+                if (smap_get_bool(&chassis->other_config,
+                                  "is-remote", false)) {
+                    /* Skip remote chassises. */
+                    continue;
+                }
+            } else {
+                VLOG_WARN("Chassis not found for Chassis_Private record, "
+                          "chassis_name: %s", chassis_priv->chassis_name);
+            }
+
+            if (chassis_priv->nb_cfg < hv_cfg) {
+                hv_cfg = chassis_priv->nb_cfg;
             }
         }
 
@@ -11690,7 +11717,9 @@ update_northbound_cfg(struct northd_context *ctx,
 
 /* Handle a fairly small set of changes in the southbound database. */
 static void
-ovnsb_db_run(struct northd_context *ctx, struct ovsdb_idl_loop *sb_loop,
+ovnsb_db_run(struct northd_context *ctx,
+             struct ovsdb_idl_index *sbrec_chassis_by_name,
+             struct ovsdb_idl_loop *sb_loop,
              struct hmap *ports)
 {
     if (!ctx->ovnnb_txn || !ovsdb_idl_has_ever_connected(ctx->ovnsb_idl)) {
@@ -11699,7 +11728,7 @@ ovnsb_db_run(struct northd_context *ctx, struct ovsdb_idl_loop *sb_loop,
 
     struct shash ha_ref_chassis_map = SHASH_INITIALIZER(&ha_ref_chassis_map);
     handle_port_binding_changes(ctx, ports, &ha_ref_chassis_map);
-    update_northbound_cfg(ctx, sb_loop);
+    update_northbound_cfg(ctx, sbrec_chassis_by_name, sb_loop);
     if (ctx->ovnsb_txn) {
         update_sb_ha_group_ref_chassis(&ha_ref_chassis_map);
     }
@@ -11718,7 +11747,7 @@ ovn_db_run(struct northd_context *ctx,
     hmap_init(&ports);
     ovnnb_db_run(ctx, sbrec_chassis_by_name, ovnsb_idl_loop,
                  &datapaths, &ports, &lr_list);
-    ovnsb_db_run(ctx, ovnsb_idl_loop, &ports);
+    ovnsb_db_run(ctx, sbrec_chassis_by_name, ovnsb_idl_loop, &ports);
     destroy_datapaths_and_ports(&datapaths, &ports, &lr_list);
 }
 
@@ -11961,9 +11990,14 @@ main(int argc, char *argv[])
     ovsdb_idl_add_column(ovnsb_idl_loop.idl, &sbrec_meter_band_col_burst_size);
 
     ovsdb_idl_add_table(ovnsb_idl_loop.idl, &sbrec_table_chassis);
-    ovsdb_idl_add_column(ovnsb_idl_loop.idl, &sbrec_chassis_col_nb_cfg);
     ovsdb_idl_add_column(ovnsb_idl_loop.idl, &sbrec_chassis_col_name);
     ovsdb_idl_add_column(ovnsb_idl_loop.idl, &sbrec_chassis_col_other_config);
+
+    ovsdb_idl_add_table(ovnsb_idl_loop.idl, &sbrec_table_chassis_private);
+    ovsdb_idl_add_column(ovnsb_idl_loop.idl,
+                         &sbrec_chassis_private_col_chassis_name);
+    ovsdb_idl_add_column(ovnsb_idl_loop.idl,
+                         &sbrec_chassis_private_col_nb_cfg);
 
     ovsdb_idl_add_table(ovnsb_idl_loop.idl, &sbrec_table_ha_chassis);
     add_column_noalert(ovnsb_idl_loop.idl,

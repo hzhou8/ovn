@@ -602,13 +602,17 @@ chassis_update(const struct sbrec_chassis *chassis_rec,
 const struct sbrec_chassis *
 chassis_run(struct ovsdb_idl_txn *ovnsb_idl_txn,
             struct ovsdb_idl_index *sbrec_chassis_by_name,
+            struct ovsdb_idl_index *sbrec_chassis_private_by_name,
             const struct ovsrec_open_vswitch_table *ovs_table,
             const struct sbrec_chassis_table *chassis_table,
             const char *chassis_id,
             const struct ovsrec_bridge *br_int,
-            const struct sset *transport_zones)
+            const struct sset *transport_zones,
+            const struct sbrec_chassis_private **chassis_private)
 {
     struct ovs_chassis_cfg ovs_cfg;
+
+    *chassis_private = NULL;
 
     /* Get the chassis config from the ovs table. */
     ovs_chassis_cfg_init(&ovs_cfg);
@@ -636,6 +640,16 @@ chassis_run(struct ovsdb_idl_txn *ovnsb_idl_txn,
                                       !existed ? "registering" : "updating",
                                       chassis_id);
         }
+
+        const struct sbrec_chassis_private *chassis_private_rec =
+            chassis_private_lookup_by_name(sbrec_chassis_private_by_name,
+                                           chassis_id);
+        if (!chassis_private_rec && ovnsb_idl_txn) {
+            chassis_private_rec = sbrec_chassis_private_insert(ovnsb_idl_txn);
+            sbrec_chassis_private_set_chassis_name(chassis_private_rec,
+                                                   chassis_id);
+        }
+        *chassis_private = chassis_private_rec;
     }
 
     ovs_chassis_cfg_destroy(&ovs_cfg);
@@ -691,7 +705,8 @@ chassis_get_mac(const struct sbrec_chassis *chassis_rec,
  * required. */
 bool
 chassis_cleanup(struct ovsdb_idl_txn *ovnsb_idl_txn,
-                const struct sbrec_chassis *chassis_rec)
+                const struct sbrec_chassis *chassis_rec,
+                const struct sbrec_chassis_private *chassis_private_rec)
 {
     if (!chassis_rec) {
         return true;
@@ -701,6 +716,7 @@ chassis_cleanup(struct ovsdb_idl_txn *ovnsb_idl_txn,
                                   "ovn-controller: unregistering chassis '%s'",
                                   chassis_rec->name);
         sbrec_chassis_delete(chassis_rec);
+        sbrec_chassis_private_delete(chassis_private_rec);
     }
     return false;
 }
