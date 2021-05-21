@@ -6443,7 +6443,7 @@ build_lswitch_rport_arp_req_self_orig_flow(struct ovn_port *op,
 
     ds_put_format(&match, "eth.src == %s && (arp.op == 1 || nd_ns)",
                   ds_cstr(&eth_src));
-    ovn_lflow_add_unique(lflows, od, S_SWITCH_IN_L2_LKUP, priority,
+    ovn_lflow_add(lflows, od, S_SWITCH_IN_L2_LKUP, priority,
                          ds_cstr(&match),
                          "outport = \""MC_FLOOD_L2"\"; output;");
 
@@ -6498,7 +6498,7 @@ build_lswitch_rport_arp_req_flow_for_ip(struct sset *ips,
         ds_put_format(&actions, "clone {outport = %s; output; }; "
                                 "outport = \""MC_FLOOD_L2"\"; output;",
                       patch_op->json_key);
-        ovn_lflow_add_unique_with_hint(lflows, od, S_SWITCH_IN_L2_LKUP,
+        ovn_lflow_add_with_hint(lflows, od, S_SWITCH_IN_L2_LKUP,
                                        priority, ds_cstr(&match),
                                        ds_cstr(&actions), stage_hint);
     } else {
@@ -6854,7 +6854,7 @@ build_lswitch_flows(struct hmap *datapaths, struct hmap *lflows)
                       "outport = get_fdb(eth.dst); next;");
 
         if (od->has_unknown) {
-            ovn_lflow_add_unique(lflows, od, S_SWITCH_IN_L2_UNKNOWN, 50,
+            ovn_lflow_add(lflows, od, S_SWITCH_IN_L2_UNKNOWN, 50,
                                  "outport == \"none\"",
                                  "outport = \""MC_UNKNOWN "\"; output;");
         } else {
@@ -7300,24 +7300,24 @@ build_lswitch_destination_lookup_bmcast(struct ovn_datapath *od,
             }
             ds_put_cstr(actions, "igmp;");
             /* Punt IGMP traffic to controller. */
-            ovn_lflow_add_unique(lflows, od, S_SWITCH_IN_L2_LKUP, 100,
+            ovn_lflow_add(lflows, od, S_SWITCH_IN_L2_LKUP, 100,
                                  "ip4 && ip.proto == 2", ds_cstr(actions));
 
             /* Punt MLD traffic to controller. */
-            ovn_lflow_add_unique(lflows, od, S_SWITCH_IN_L2_LKUP, 100,
+            ovn_lflow_add(lflows, od, S_SWITCH_IN_L2_LKUP, 100,
                                  "mldv1 || mldv2", ds_cstr(actions));
 
             /* Flood all IP multicast traffic destined to 224.0.0.X to all
              * ports - RFC 4541, section 2.1.2, item 2.
              */
-            ovn_lflow_add_unique(lflows, od, S_SWITCH_IN_L2_LKUP, 85,
+            ovn_lflow_add(lflows, od, S_SWITCH_IN_L2_LKUP, 85,
                                  "ip4.mcast && ip4.dst == 224.0.0.0/24",
                                  "outport = \""MC_FLOOD"\"; output;");
 
             /* Flood all IPv6 multicast traffic destined to reserved
              * multicast IPs (RFC 4291, 2.7.1).
              */
-            ovn_lflow_add_unique(lflows, od, S_SWITCH_IN_L2_LKUP, 85,
+            ovn_lflow_add(lflows, od, S_SWITCH_IN_L2_LKUP, 85,
                                  "ip6.mcast_flood",
                                  "outport = \""MC_FLOOD"\"; output;");
 
@@ -7349,13 +7349,13 @@ build_lswitch_destination_lookup_bmcast(struct ovn_datapath *od,
                     ds_put_cstr(actions, "drop;");
                 }
 
-                ovn_lflow_add_unique(lflows, od, S_SWITCH_IN_L2_LKUP, 80,
+                ovn_lflow_add(lflows, od, S_SWITCH_IN_L2_LKUP, 80,
                                      "ip4.mcast || ip6.mcast",
                                      ds_cstr(actions));
             }
         }
 
-        ovn_lflow_add_unique(lflows, od, S_SWITCH_IN_L2_LKUP, 70, "eth.mcast",
+        ovn_lflow_add(lflows, od, S_SWITCH_IN_L2_LKUP, 70, "eth.mcast",
                              "outport = \""MC_FLOOD"\"; output;");
     }
 }
@@ -7434,7 +7434,7 @@ build_lswitch_ip_mcast_igmp_mld(struct ovn_igmp_group *igmp_group,
         ds_put_format(actions, "outport = \"%s\"; output; ",
                       igmp_group->mcgroup.name);
 
-        ovn_lflow_add_unique(lflows, igmp_group->datapath, S_SWITCH_IN_L2_LKUP,
+        ovn_lflow_add(lflows, igmp_group->datapath, S_SWITCH_IN_L2_LKUP,
                              90, ds_cstr(match), ds_cstr(actions));
     }
 }
@@ -9976,7 +9976,7 @@ build_mcast_lookup_flows_for_lrouter(
             }
             ds_put_format(actions, "outport = \"%s\"; ip.ttl--; next;",
                           igmp_group->mcgroup.name);
-            ovn_lflow_add_unique(lflows, od, S_ROUTER_IN_IP_ROUTING, 500,
+            ovn_lflow_add(lflows, od, S_ROUTER_IN_IP_ROUTING, 500,
                                  ds_cstr(match), ds_cstr(actions));
         }
 
@@ -9984,7 +9984,7 @@ build_mcast_lookup_flows_for_lrouter(
          * ports. Otherwise drop any multicast traffic.
          */
         if (od->mcast_info.rtr.flood_static) {
-            ovn_lflow_add_unique(lflows, od, S_ROUTER_IN_IP_ROUTING, 450,
+            ovn_lflow_add(lflows, od, S_ROUTER_IN_IP_ROUTING, 450,
                           "ip4.mcast || ip6.mcast",
                           "clone { "
                                 "outport = \""MC_STATIC"\"; "
