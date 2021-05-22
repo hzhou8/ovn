@@ -2272,6 +2272,13 @@ flow_output_sb_multicast_group_handler(struct engine_node *node, void *data)
     struct ed_type_flow_output *fo = data;
     struct ovn_desired_flow_table *flow_table = &fo->flow_table;
 
+    struct lflow_ctx_in l_ctx_in;
+    struct lflow_ctx_out l_ctx_out;
+    init_lflow_ctx(node, rt_data, fo, &l_ctx_in, &l_ctx_out);
+    if (!lflow_handle_mc_group_changes(&l_ctx_in, &l_ctx_out)) {
+        return false;
+    }
+
     struct physical_ctx p_ctx;
     init_physical_ctx(node, rt_data, &p_ctx);
 
@@ -2345,8 +2352,12 @@ _flow_output_resource_ref_handler(struct engine_node *node, void *data,
             deleted = &pg_data->deleted;
             break;
 
-        /* This ref type is handled in the flow_output_runtime_data_handler. */
         case REF_TYPE_PORTBINDING:
+            /* This ref type is handled in the
+             * flow_output_runtime_data_handler. */
+        case REF_TYPE_MC_GROUP:
+            /* This ref type is handled in the
+             * flow_output_sb_multicast_group_handler. */
         default:
             OVS_NOT_REACHED();
     }
