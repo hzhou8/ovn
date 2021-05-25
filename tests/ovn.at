@@ -26749,3 +26749,51 @@ AT_CHECK([ovs-ofctl dump-flows br-int "nw_src=10.0.0.0/24" | \
 OVN_CLEANUP([hv1])
 AT_CLEANUP
 ])
+
+# Test when a logical port name is used in an ACL before it is created. When it
+# is created later, the ACL should be programmed as openflow rules by
+# ovn-controller. Although this is not likely to happen in real world use
+# cases, it is possible that a port-binding is observed by ovn-controller AFTER
+# an lflow that references the port is processed. So this test case is to make
+# sure the incremental processing in ovn-controller reprocesses the lflow when
+# the port-binding is observed.
+OVN_FOR_EACH_NORTHD([
+AT_SETUP([ovn -- ACL referencing lport before creation])
+ovn_start
+
+net_add n1
+
+sim_add hv1
+as hv1
+ovs-vsctl add-br br-phys
+ovn_attach n1 br-phys 192.168.0.1
+
+# Bind both lp1 and lp2 on the chasis.
+ovs-vsctl add-port br-int lp1 -- set interface lp1 external_ids:iface-id=lp1
+ovs-vsctl add-port br-int lp2 -- set interface lp2 external_ids:iface-id=lp2
+
+# Create only lport lp1, but not lp2.
+ovn-nbctl ls-add lsw0
+ovn-nbctl lsp-add lsw0 lp1 \
+    -- lsp-set-addresses lp1 "f0:00:00:00:00:01 10.0.0.11"
+
+# Each lport is referenced by an ACL.
+ovn-nbctl acl-add lsw0 to-lport 1002 'outport == "lp1" && ip4.src == 10.0.0.111'  allow-related
+ovn-nbctl acl-add lsw0 to-lport 1002 'outport == "lp2" && ip4.src == 10.0.0.222'  allow-related
+
+# The first ACL should be programmed.
+check ovn-nbctl --wait=hv sync
+AT_CHECK([ovs-ofctl dump-flows br-int table=44 | grep 10.0.0.111], [0], [ignore])
+
+# Now create the lport lp2.
+ovn-nbctl ls-add lsw0
+ovn-nbctl lsp-add lsw0 lp2 \
+    -- lsp-set-addresses lp2 "f0:00:00:00:00:02 10.0.0.22"
+
+check ovn-nbctl --wait=hv sync
+# Now the second ACL should be programmed.
+AT_CHECK([ovs-ofctl dump-flows br-int table=44 | grep 10.0.0.222], [0], [ignore])
+
+OVN_CLEANUP([hv1])
+AT_CLEANUP
+])

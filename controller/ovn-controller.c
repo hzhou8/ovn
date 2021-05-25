@@ -2000,6 +2000,10 @@ static void init_lflow_ctx(struct engine_node *node,
                 engine_get_input("SB_multicast_group", node),
                 "name_datapath");
 
+    struct sbrec_port_binding_table *port_binding_table =
+        (struct sbrec_port_binding_table *)EN_OVSDB_GET(
+            engine_get_input("SB_port_binding", node));
+
     struct sbrec_dhcp_options_table *dhcp_table =
         (struct sbrec_dhcp_options_table *)EN_OVSDB_GET(
             engine_get_input("SB_dhcp_options", node));
@@ -2063,6 +2067,7 @@ static void init_lflow_ctx(struct engine_node *node,
     l_ctx_in->sbrec_logical_flow_by_logical_dp_group =
         sbrec_logical_flow_by_dp_group;
     l_ctx_in->sbrec_port_binding_by_name = sbrec_port_binding_by_name;
+    l_ctx_in->port_binding_table = port_binding_table;
     l_ctx_in->dhcp_options_table  = dhcp_table;
     l_ctx_in->dhcpv6_options_table = dhcpv6_table;
     l_ctx_in->mac_binding_table = mac_binding_table;
@@ -2253,6 +2258,13 @@ flow_output_sb_port_binding_handler(struct engine_node *node,
     struct ed_type_flow_output *fo = data;
     struct ovn_desired_flow_table *flow_table = &fo->flow_table;
 
+    struct lflow_ctx_in l_ctx_in;
+    struct lflow_ctx_out l_ctx_out;
+    init_lflow_ctx(node, rt_data, fo, &l_ctx_in, &l_ctx_out);
+    if (!lflow_handle_port_binding_add_del(&l_ctx_in, &l_ctx_out)) {
+        return false;
+    }
+
     struct physical_ctx p_ctx;
     init_physical_ctx(node, rt_data, &p_ctx);
 
@@ -2356,8 +2368,9 @@ _flow_output_resource_ref_handler(struct engine_node *node, void *data,
             break;
 
         case REF_TYPE_PORTBINDING:
-            /* This ref type is handled in the
-             * flow_output_runtime_data_handler. */
+            /* This ref type is handled in:
+             * - flow_output_runtime_data_handler
+             * - flow_output_sb_port_binding_handler. */
         case REF_TYPE_MC_GROUP:
             /* This ref type is handled in the
              * flow_output_sb_multicast_group_handler. */
