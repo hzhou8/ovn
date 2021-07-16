@@ -613,11 +613,6 @@ ovn_mcast_group_allocate_key(struct mcast_info *mcast_info)
                               &mcast_info->group_tnlid_hint);
 }
 
-struct ovn_l3dgw_port {
-    struct ovn_port *dgw_port;
-
-};
-
 /* The 'key' comes from nbs->header_.uuid or nbr->header_.uuid or
  * sb->external_ids:logical-switch. */
 struct ovn_datapath {
