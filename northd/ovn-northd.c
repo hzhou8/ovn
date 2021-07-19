@@ -652,7 +652,7 @@ struct ovn_datapath {
     bool is_gw_router;
 
     /* OVN northd only needs to know about the logical router gateway port for
-     * NAT on a distributed router.  This "distributed gateway port" is
+     * NAT on a distributed router.  The "distributed gateway ports" are
      * populated only when there is a gateway chassis or ha chassis group
      * specified for some of the ports on the logical router. Otherwise this
      * will be NULL. */
@@ -1486,14 +1486,17 @@ struct ovn_port {
     /* Logical port multicast data. */
     struct mcast_port_info mcast_info;
 
-    /* At most one of the l3dgw_port and cr_port can be not NULL. */
+    /* At most one of l3dgw_port and cr_port can be not NULL. */
 
-    /* It is set to a distributed gateway port if and this ovn_port is derived
-     * from it. Otherwise it is set to NULL. */
+    /* This is set to a distributed gateway port if and only if this ovn_port
+     * is "derived" from it. Otherwise this is set to NULL. The derived
+     * ovn_port represents the instance of distributed gateway port on the
+     * gateway chassis.*/
     struct ovn_port *l3dgw_port;
 
-    /* It is set to the chassis-redirect port of this port if this port is a
-     * distributed gateway port. Otherwise it is set to NULL. */
+    /* This is set to the "derived" chassis-redirect port of this port if and
+     * only if this port is a distributed gateway port. Otherwise this is set
+     * to NULL. */
     struct ovn_port *cr_port;
 
     bool has_unknown; /* If the addresses have 'unknown' defined. */
