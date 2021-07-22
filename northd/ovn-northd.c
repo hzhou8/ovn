@@ -798,6 +798,16 @@ init_nat_entries(struct ovn_datapath *od)
         return;
     }
 
+    if (od->n_l3dgw_ports > 1) {
+        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
+        VLOG_WARN_RL(&rl, "NAT is configured on logical router %s, which has %"
+                     PRIuSIZE" distributed gateway ports. NAT is not supported"
+                     " yet when there is more than one distributed gateway "
+                     "port on the router.",
+                     od->nbr->name, od->n_l3dgw_ports);
+        return;
+    }
+
     od->nat_entries = xmalloc(od->nbr->n_nat * sizeof *od->nat_entries);
 
     for (size_t i = 0; i < od->nbr->n_nat; i++) {
@@ -2601,7 +2611,8 @@ get_nat_addresses(const struct ovn_port *op, size_t *n, bool routable_only)
     struct eth_addr mac;
     if (!op || !op->nbrp || !op->od || !op->od->nbr
         || (!op->od->nbr->n_nat && !op->od->nbr->n_load_balancer)
-        || !eth_addr_from_string(op->nbrp->mac, &mac)) {
+        || !eth_addr_from_string(op->nbrp->mac, &mac)
+        || op->od->n_l3dgw_ports > 1) {
         *n = n_nats;
         return NULL;
     }
@@ -3239,12 +3250,26 @@ ovn_port_update_sbrec(struct northd_context *ctx,
              * sending the GARPs for the router port IPs.
              * */
             bool add_router_port_garp = false;
-            if (op->peer && op->peer->nbrp && op->peer->od->l3dgw_ports &&
-                /* op->od->n_localnet_ports && TODO: separate patch */
-                (smap_get_bool(&op->peer->nbrp->options,
-                              "reside-on-redirect-chassis", false) ||
-                 op->peer->cr_port)) {
-                add_router_port_garp = true;
+            if (op->peer && op->peer->nbrp && op->peer->od->l3dgw_ports) {
+                if (op->peer->cr_port) {
+                    add_router_port_garp = true;
+                } else if (smap_get_bool(&op->peer->nbrp->options,
+                               "reside-on-redirect-chassis", false)) {
+                    if (op->peer->od->n_l3dgw_ports == 1) {
+                        add_router_port_garp = true;
+                    } else {
+                        static struct vlog_rate_limit rl =
+                            VLOG_RATE_LIMIT_INIT(1, 1);
+                        VLOG_WARN_RL(&rl, "\"reside-on-redirect-chassis\" is "
+                                     "set on logical router port %s, which "
+                                     "is on logical router %s, which has %"
+                                     PRIuSIZE" distributed gateway ports. This"
+                                     "option can only be used when there is "
+                                     "a single distributed gateway port.",
+                                     op->peer->key, op->peer->od->nbr->name,
+                                     op->peer->od->n_l3dgw_ports);
+                    }
+                }
             } else if (chassis && op->od->n_localnet_ports) {
                 add_router_port_garp = true;
             }
@@ -3534,7 +3559,17 @@ build_ovn_lr_lbs(struct hmap *datapaths, struct hmap *lbs)
         if (!od->nbr) {
             continue;
         }
-        if (!smap_get(&od->nbr->options, "chassis") && !od->l3dgw_ports) {
+        if (!smap_get(&od->nbr->options, "chassis")
+            && od->n_l3dgw_ports != 1) {
+            if (od->n_l3dgw_ports > 1 && od->nbr->n_load_balancer) {
+                static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
+                VLOG_WARN_RL(&rl, "Load-balancers are configured on logical "
+                             "router %s, which has %"PRIuSIZE" distributed "
+                             "gateway ports. Load-balancer is not supported "
+                             "yet when there is more than one distributed "
+                             "gateway port on the router.",
+                             od->nbr->name, od->n_l3dgw_ports);
+            }
             continue;
         }
 
@@ -7803,7 +7838,8 @@ build_lswitch_ip_unicast_lookup(struct ovn_port *op,
                          */
                         add_chassis_resident_check = smap_get_bool(
                             &op->peer->nbrp->options,
-                            "reside-on-redirect-chassis", false);
+                            "reside-on-redirect-chassis", false) &&
+                            op->peer->od->n_l3dgw_ports == 1;
                         json_key =
                             op->peer->od->l3dgw_ports[0]->cr_port->json_key;
                     }
@@ -10851,7 +10887,6 @@ build_check_pkt_len_flows_for_lrouter(
                   "next;");
     ovn_lflow_add(lflows, od, S_ROUTER_IN_LARGER_PKTS, 0, "1",
                   "next;");
-    // TODO: check localnet ports (separate patch)
     for (size_t dgp = 0; dgp < od->n_l3dgw_ports; dgp++) {
         int gw_mtu = 0;
         if (od->l3dgw_ports[dgp]->nbrp) {
@@ -11463,7 +11498,8 @@ build_lrouter_ipv4_ip_input(struct ovn_port *op,
                      */
                     add_chassis_resident_check = smap_get_bool(
                         &op->nbrp->options,
-                        "reside-on-redirect-chassis", false);
+                        "reside-on-redirect-chassis", false) &&
+                        op->od->n_l3dgw_ports == 1;
                     json_key = op->od->l3dgw_ports[0]->cr_port->json_key;
                 }
 
