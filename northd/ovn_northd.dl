@@ -6312,7 +6312,7 @@ for (RouterLBVIP(
             } in
         var __match = match1 ++ match2 ++
             match ((l3dgw_ports.nth(0), backends != "" or lb.options.get_bool_def("reject", false))) {
-                (Some {var gw_port}, true) -> " && is_chassis_resident(${chassis_redirect_name(gw_port.name)})",
+                (Some{gw_port}, true) -> " && is_chassis_resident(${json_string_escape(chassis_redirect_name(gw_port.name))})",
                 _ -> ""
             } in
         var snat_for_lb = snat_for_lb(r.options, lb) in
@@ -6325,7 +6325,7 @@ for (RouterLBVIP(
                     ""
                 } ++
                 match ((l3dgw_ports.nth(0), backends != "" or lb.options.get_bool_def("reject", false))) {
-                    (Some {var gw_port}, true) -> " && is_chassis_resident(${chassis_redirect_name(gw_port.name)})",
+                    (Some {var gw_port}, true) -> " && is_chassis_resident(${json_string_escape(chassis_redirect_name(gw_port.name))})",
                     _ -> ""
                 } in
             var actions =
@@ -6364,7 +6364,7 @@ for (RouterLBVIP(
                      .external_ids     = stage_hint(lb._uuid))
             };
 
-            Some {var gwport} = l3dgw_ports.nth(0) in
+            Some{var gwport} = l3dgw_ports.nth(0) in
             /* Add logical flows to UNDNAT the load balanced reverse traffic in
              * the router egress pipleine stage - S_ROUTER_OUT_UNDNAT if the logical
              * router has a gateway router port associated.
@@ -6389,7 +6389,7 @@ for (RouterLBVIP(
             var undnat_match =
                 "${ip_address.ipX()} && (" ++ conds.join(" || ") ++
                 ") && outport == ${json_string_escape(gwport.name)} && "
-                "is_chassis_resident(${gwport.name})" in
+                "is_chassis_resident(${json_string_escape(chassis_redirect_name(gwport.name))})" in
             var action =
                 match (snat_for_lb) {
                     SkipSNAT -> "flags.skip_snat_for_lb = 1; ct_dnat;",
@@ -6425,7 +6425,7 @@ Flow(.logical_datapath = r._uuid,
         = "ct.new && " ++
           get_match_for_lb_key(lbvip.vip_addr, lbvip.vip_port, lb.protocol, true, true) ++
           match (r.l3dgw_ports.nth(0)) {
-              Some {var gw_port} -> " && is_chassis_resident(${chassis_redirect_name(gw_port.name)})",
+              Some{gw_port} -> " && is_chassis_resident(${json_string_escape(chassis_redirect_name(gw_port.name))})",
               _ -> ""
           },
     var priority = if (lbvip.vip_port != 0) 120 else 110,
