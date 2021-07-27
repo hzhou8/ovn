@@ -182,7 +182,7 @@ OutProxy_Port_Binding(._uuid              = lsp._uuid,
     },
     Some{var router_port} = lsp.options.get("router-port"),
     var opt_chassis = peer.and_then(|p| p.router.options.get("chassis")),
-    var has_redirect = peer.and_then(|p| p.router.l3dgw_ports.len() > 0),
+    var l3dgw_port = peer.and_then(|p| p.router.l3dgw_ports.nth(0)),
     (var __type, var options) = {
         var options = ["peer" -> router_port];
         match (opt_chassis) {
@@ -198,10 +198,10 @@ OutProxy_Port_Binding(._uuid              = lsp._uuid,
     var base_nat_addresses = {
         match (lsp.options.get("nat-addresses")) {
             None -> { set_empty() },
-            Some{"router"} -> match ((has_redirect, opt_chassis, peer)) {
-                                 (false, None, _) -> set_empty(),
-                                 (true, _, None) -> set_empty(),
-                                 (true, _, Some{rport}) -> get_nat_addresses(rport, false)
+            Some{"router"} -> match ((l3dgw_port, opt_chassis, peer)) {
+                                 (None, None, _) -> set_empty(),
+                                 (_, _, None) -> set_empty(),
+                                 (_, _, Some{rport}) -> get_nat_addresses(rport, false)
                               },
             Some{nat_addresses} -> {
                 /* Only accept manual specification of ethernet address
@@ -237,7 +237,7 @@ OutProxy_Port_Binding(._uuid              = lsp._uuid,
     var garp_nat_addresses = match (peer) {
         Some{rport} -> match (
             (rport.lrp.options.get_bool_def("reside-on-redirect-chassis", false)
-             and has_redirect) or
+             and l3dgw_port.is_some()) or
             rport.is_redirect or
             (rport.router.options.contains_key("chassis") and
              not sw.localnet_ports.is_empty())) {
@@ -399,9 +399,10 @@ function get_nat_addresses(rport: Intern<RouterPort>, routable_only: bool): Set<
                 /* Gratuitous ARP for centralized NAT rules on distributed gateway
                  * ports should be restricted to the gateway chassis. */
                 if (has_redirect) {
-                    var redirect_port_name = json_string_escape(chassis_redirect_name(
-                        rport.router.l3dgw_ports.nth(0).name));
-                    c_addresses = c_addresses ++ " is_chassis_resident(${redirect_port_name})"
+                    c_addresses = c_addresses ++ match (rport.router.l3dgw_ports.nth(0)) {
+                        None -> "",
+                        Some {var gw_port} -> " is_chassis_resident(${json_string_escape(chassis_redirect_name(gw_port.name))})"
+                    }
                 } else ();
 
                 addresses.insert(c_addresses)
@@ -416,9 +417,9 @@ function get_garp_nat_addresses(rport: Intern<RouterPort>): string = {
     for (ipv4_addr in rport.networks.ipv4_addrs) {
         garp_info.push("${ipv4_addr.addr}")
     };
-    if (rport.router.l3dgw_ports.len() > 0) {
-        Some {var gw_port} = rport.router.l3dgw_ports.nth(0);
-        garp_info.push(
+    match (rport.router.l3dgw_ports.nth(0)) {
+        None -> (),
+        Some {var gw_port} -> garp_info.push(
             "is_chassis_resident(${json_string_escape(chassis_redirect_name(gw_port.name))})")
     };
     garp_info.join(" ")
@@ -4447,7 +4448,10 @@ for (&SwitchPort(.lsp = lsp,
             var redirect_port_name = if (is_redirect) {
                 json_string_escape(chassis_redirect_name(lrp.name))
             } else {
-                json_string_escape(chassis_redirect_name(l3dgw_ports.nth(0).name))
+                match (l3dgw_ports.nth(0)) {
+                    Some {var gw_port} -> json_string_escape(chassis_redirect_name(gw_port.name)),
+                    None -> ""
+                }
             };
             /* The destination lookup flow for the router's
              * distributed gateway port MAC address should only be
@@ -5113,8 +5117,7 @@ LogicalRouterArpNdFlow(router, nat, None, rEG_INPORT_ETH_ADDR(), None, false, 90
  */
 LogicalRouterPortNatArpNdFlow(router, nat, l3dgw_port) :-
     router in &Router(._uuid = lr_uuid, .l3dgw_ports = l3dgw_ports),
-    not l3dgw_ports.is_empty(),
-    l3dgw_ports.nth(0) == l3dgw_port,
+    Some {var l3dgw_port} = l3dgw_ports.nth(0),
     LogicalRouterNAT(lr_uuid, nat),
     /* Skip SNAT entries for now, we handle unique SNAT IPs separately
      * below.
@@ -5123,8 +5126,7 @@ LogicalRouterPortNatArpNdFlow(router, nat, l3dgw_port) :-
 /* Now handle SNAT entries too, one per unique SNAT IP. */
 LogicalRouterPortNatArpNdFlow(router, nat, l3dgw_port) :-
     router in &Router(.l3dgw_ports = l3dgw_ports, .snat_ips = snat_ips),
-    not l3dgw_ports.is_empty(),
-    l3dgw_ports.nth(0) == l3dgw_port,
+    Some {var l3dgw_port} = l3dgw_ports.nth(0),
     var snat_ip = FlatMap(snat_ips),
     (var ip, var nats) = snat_ip,
     Some{var nat} = nats.nth(0).
@@ -5154,9 +5156,9 @@ LogicalRouterArpNdFlow(router, nat, Some{lrp}, mac, None, true, 91) :-
              * upstream MAC learning points to the gateway chassis.
              * Also need to avoid generation of multiple ARP responses
              * from different chassis. */
-            match (not router.l3dgw_ports.is_empty()) {
-                false -> "",
-                true -> "is_chassis_resident(${json_string_escape(chassis_redirect_name(router.l3dgw_ports.nth(0).name))})"
+            match (router.l3dgw_ports.nth(0)) {
+                None -> "",
+                Some {var gw_port} -> "is_chassis_resident(${json_string_escape(chassis_redirect_name(gw_port.name))})"
             }
         )
     }.
@@ -5301,7 +5303,10 @@ for (RouterPortNetworksIPv4Addr(.port = &RouterPort{.lrp = lrp,
                 var redirect_port_name = if (is_redirect) {
                     json_string_escape(chassis_redirect_name(lrp.name))
                 } else {
-                    json_string_escape(chassis_redirect_name(router.l3dgw_ports.nth(0).name))
+                    match (router.l3dgw_ports.nth(0)) {
+                        None -> "",
+                        Some {var gw_port} -> json_string_escape(chassis_redirect_name(gw_port.name))
+                    }
                 };
                 " && is_chassis_resident(${redirect_port_name})"
             } else "" in
@@ -5876,7 +5881,7 @@ for (r in &Router(._uuid = lr_uuid,
                          .actions          = actions,
                          .external_ids     = stage_hint(nat.nat._uuid))
                 };
-                var gwport = l3dgw_ports.nth(0) in {
+                Some {var gwport} = l3dgw_ports.nth(0) in {
                     /* Distributed router. */
 
                     /* Traffic received on l3dgw_port is subject to NAT. */
@@ -5944,7 +5949,7 @@ for (r in &Router(._uuid = lr_uuid,
                          .external_ids     = stage_hint(nat.nat._uuid))
                 };
 
-                var gwport = l3dgw_ports.nth(0) in
+                Some {var gwport} = l3dgw_ports.nth(0) in
                 var __match =
                     "ip && ${ipX}.dst == ${nat.nat.external_ip}"
                     " && inport == ${json_string_escape(gwport.name)}" ++
@@ -5975,7 +5980,7 @@ for (r in &Router(._uuid = lr_uuid,
             };
 
             /* ARP resolve for NAT IPs. */
-            var gwport = l3dgw_ports.nth(0) in {
+            Some {var gwport} = l3dgw_ports.nth(0) in {
             var gwport_name = json_string_escape(gwport.name) in {
                 if (nat.nat.__type == "snat") {
                     var __match = "inport == ${gwport_name} && "
@@ -6012,14 +6017,14 @@ for (r in &Router(._uuid = lr_uuid,
              * Note that this only applies for NAT on a distributed router.
              */
             if ((nat.nat.__type == "dnat" or nat.nat.__type == "dnat_and_snat")) {
-                var gwport = l3dgw_ports.nth(0) in
+                Some {var gwport} = l3dgw_ports.nth(0) in
                 var __match =
                     "ip && ${ipX}.src == ${nat.nat.logical_ip}"
                     " && outport == ${json_string_escape(gwport.name)}" ++
                     if (mac == None) {
                         /* Flows for NAT rules that are centralized are only
                          * programmed on the "redirect-chassis". */
-                        " && is_chassis_resident(${redirect_port_name})"
+                        " && is_chassis_resident(${json_string_escape(chassis_redirect_name(gwport.name))})"
                     } else { "" } in
                 var actions =
                     match (mac) {
@@ -6074,7 +6079,7 @@ for (r in &Router(._uuid = lr_uuid,
                          .external_ids     = stage_hint(nat.nat._uuid))
                 };
 
-                var gwport = l3dgw_ports.nth(0) in
+                Some {var gwport} = l3dgw_ports.nth(0) in
                 var __match =
                     "ip && ${ipX}.src == ${nat.nat.logical_ip}"
                     " && outport == ${json_string_escape(gwport.name)}" ++
@@ -6119,7 +6124,7 @@ for (r in &Router(._uuid = lr_uuid,
              * on the l3dgw_port instance where nat->logical_port is
              * resident. */
             Some{var mac_addr} = mac in
-            var gwport = l3dgw_ports.nth(0) in
+            Some{var gwport} = l3dgw_ports.nth(0) in
             Some{var logical_port} = nat.nat.logical_port in
             var __match =
                 "eth.dst == ${mac_addr} && inport == ${json_string_escape(gwport.name)}"
@@ -6145,7 +6150,7 @@ for (r in &Router(._uuid = lr_uuid,
              * stage is sent out with proper IP/MAC src addresses
              */
             Some{var mac_addr} = mac in
-            var gwport = l3dgw_ports.nth(0) in
+            Some{var gwport} = l3dgw_ports.nth(0) in
             Some{var logical_port} = nat.nat.logical_port in
             Some{var external_mac} = nat.nat.external_mac in
             var __match =
@@ -6168,7 +6173,7 @@ for (r in &Router(._uuid = lr_uuid,
              * gateway port have ip.dst matching a NAT external IP, then
              * loop a clone of the packet back to the beginning of the
              * ingress pipeline with inport = outport. */
-            var gwport = l3dgw_ports.nth(0) in
+            Some{var gwport} = l3dgw_ports.nth(0) in
             /* Distributed router. */
             Some{var port} = match (mac) {
                 Some{_} -> match (nat.nat.logical_port) {
@@ -6306,8 +6311,8 @@ for (RouterLBVIP(
                 (110, "")
             } in
         var __match = match1 ++ match2 ++
-            match ((l3dgw_ports.is_empty(), backends != "" or lb.options.get_bool_def("reject", false))) {
-                (false, true) -> " && is_chassis_resident(${chassis_redirect_name(l3dgw_ports.nth(0).name)})",
+            match ((l3dgw_ports.nth(0), backends != "" or lb.options.get_bool_def("reject", false))) {
+                (Some {var gw_port}, true) -> " && is_chassis_resident(${chassis_redirect_name(gw_port.name)})",
                 _ -> ""
             } in
         var snat_for_lb = snat_for_lb(r.options, lb) in
@@ -6319,8 +6324,8 @@ for (RouterLBVIP(
                 } else {
                     ""
                 } ++
-                match ((l3dgw_ports.is_empty(), backends != "" or lb.options.get_bool_def("reject", false))) {
-                    (false, true) -> " && is_chassis_resident(${chassis_redirect_name(l3dgw_ports.nth(0).name)})",
+                match ((l3dgw_ports.nth(0), backends != "" or lb.options.get_bool_def("reject", false))) {
+                    (Some {var gw_port}, true) -> " && is_chassis_resident(${chassis_redirect_name(gw_port.name)})",
                     _ -> ""
                 } in
             var actions =
@@ -6359,7 +6364,7 @@ for (RouterLBVIP(
                      .external_ids     = stage_hint(lb._uuid))
             };
 
-            var gwport = l3dgw_ports.nth(0) in
+            Some {var gwport} = l3dgw_ports.nth(0) in
             /* Add logical flows to UNDNAT the load balanced reverse traffic in
              * the router egress pipleine stage - S_ROUTER_OUT_UNDNAT if the logical
              * router has a gateway router port associated.
@@ -6419,8 +6424,8 @@ Flow(.logical_datapath = r._uuid,
     var __match
         = "ct.new && " ++
           get_match_for_lb_key(lbvip.vip_addr, lbvip.vip_port, lb.protocol, true, true) ++
-          match (not r.l3dgw_ports.is_empty()) {
-              true -> " && is_chassis_resident(${chassis_redirect_name(r.l3dgw_ports.nth(0).name)})",
+          match (r.l3dgw_ports.nth(0)) {
+              Some {var gw_port} -> " && is_chassis_resident(${chassis_redirect_name(gw_port.name)})",
               _ -> ""
           },
     var priority = if (lbvip.vip_port != 0) 120 else 110,
@@ -7219,11 +7224,11 @@ Flow(.logical_datapath = router._uuid,
      .stage            = s_ROUTER_IN_ARP_RESOLVE(),
      .priority         = 50,
      .__match          = "outport == ${rp.json_name} && "
-                         "!is_chassis_resident(${json_string_escape(chassis_redirect_name(router.l3dgw_ports.nth(0).name))})",
+                         "!is_chassis_resident(${json_string_escape(chassis_redirect_name(l3dgw_port.name))})",
      .actions          = "eth.dst = ${rp.networks.ea}; next;",
      .external_ids     = stage_hint(lrp._uuid)) :-
     rp in &RouterPort(.lrp = lrp, .router = router),
-    router.l3dgw_ports.len() > 0,
+    Some{var l3dgw_port} = router.l3dgw_ports.nth(0),
     Some{"bridged"} = lrp.options.get("redirect-type").
 
 
@@ -7466,9 +7471,8 @@ Flow(.logical_datapath = lr_uuid,
                          "next;",
      .external_ids     = stage_hint(l3dgw_port._uuid)) :-
     r in &Router(._uuid = lr_uuid),
-    var l3dgw_port = r.l3dgw_ports.nth(0),
+    Some{var l3dgw_port} = r.l3dgw_ports.nth(0),
     var l3dgw_port_json_name = json_string_escape(l3dgw_port.name),
-    r.l3dgw_ports.len() > 0,
     var gw_mtu = l3dgw_port.options.get_int_def("gateway_mtu", 0),
     gw_mtu > 0,
     var mtu = gw_mtu + vLAN_ETH_HEADER_LEN().
@@ -7491,9 +7495,8 @@ Flow(.logical_datapath = lr_uuid,
                          "};",
      .external_ids     = stage_hint(rp.lrp._uuid)) :-
     r in &Router(._uuid = lr_uuid),
-    var l3dgw_port = r.l3dgw_ports.nth(0),
+    Some{var l3dgw_port} = r.l3dgw_ports.nth(0),
     var l3dgw_port_json_name = json_string_escape(l3dgw_port.name),
-    r.l3dgw_ports.len() > 0,
     var gw_mtu = l3dgw_port.options.get_int_def("gateway_mtu", 0),
     gw_mtu > 0,
     rp in &RouterPort(.router = r),
@@ -7518,9 +7521,8 @@ Flow(.logical_datapath = lr_uuid,
                          "};",
      .external_ids     = stage_hint(rp.lrp._uuid)) :-
     r in &Router(._uuid = lr_uuid),
-    var l3dgw_port = r.l3dgw_ports.nth(0),
+    Some{var l3dgw_port} = r.l3dgw_ports.nth(0),
     var l3dgw_port_json_name = json_string_escape(l3dgw_port.name),
-    r.l3dgw_ports.len > 0,
     var gw_mtu = l3dgw_port.options.get_int_def("gateway_mtu", 0),
     gw_mtu > 0,
     rp in &RouterPort(.router = r),
@@ -7541,7 +7543,7 @@ for (&Router(._uuid = lr_uuid,
      * packet did not match any higher priority redirect
      * rule, then the traffic is redirected to the central
      * instance of the l3dgw_port. */
-    var gwport = l3dgw_ports.nth(0) in
+    Some{var gwport} = l3dgw_ports.nth(0) in
     Flow(.logical_datapath = lr_uuid,
          .stage            = s_ROUTER_IN_GW_REDIRECT(),
          .priority         = 50,
