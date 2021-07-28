@@ -457,7 +457,7 @@ OutProxy_Port_Binding(// lrp._uuid is already in use; generate a new UUID by
                       .nat_addresses      = set_empty(),
                       .external_ids       = lrp.external_ids) :-
     DistributedGatewayPort(lrp, lr_uuid),
-    LogicalRouterHAChassisGroup(lr_uuid, hacg_uuid),
+    DistributedGatewayPortHAChassisGroup(lrp, hacg_uuid),
     var redirect_type = match (lrp.options.get("redirect-type")) {
         Some{var value} -> ["redirect-type" -> value],
         _ -> map_empty()
@@ -513,7 +513,8 @@ sb::Out_Port_Binding(._uuid              = pbinding._uuid,
  * chassis.  RefChassisSet has a row for every logical router. */
 relation RefChassis(lr_uuid: uuid, chassis_uuid: uuid)
 RefChassis(lr_uuid, chassis_uuid) :-
-    LogicalRouterHAChassisGroup(lr_uuid, _),
+    DistributedGatewayPortHAChassisGroup(lrp, _),
+    DistributedGatewayPort(lrp, lr_uuid),
     ConnectedLogicalRouter[(lr_uuid, set_uuid)],
     ConnectedLogicalRouter[(lr2_uuid, set_uuid)],
     FirstHopLogicalRouter(lr2_uuid, ls_uuid),
@@ -540,7 +541,8 @@ RefChassisSet(lr_uuid, set_empty()) :-
 relation HAChassisGroupRefChassisSet(hacg_uuid: uuid,
                                      chassis_uuids: Set<uuid>)
 HAChassisGroupRefChassisSet(hacg_uuid, chassis_uuids) :-
-    LogicalRouterHAChassisGroup(lr_uuid, hacg_uuid),
+    DistributedGatewayPortHAChassisGroup(lrp, hacg_uuid),
+    DistributedGatewayPort(lrp, lr_uuid),
     RefChassisSet(lr_uuid, chassis_uuids),
     var chassis_uuids = chassis_uuids.group_by(hacg_uuid).union().
 
@@ -7536,20 +7538,20 @@ Flow(.logical_datapath = lr_uuid,
  * of the traffic to the l3redirect_port which represents
  * the central instance of the l3dgw_port.
  */
-for (&Router(._uuid = lr_uuid,
-             .l3dgw_ports = l3dgw_ports))
+for (&Router(._uuid = lr_uuid))
 {
     /* For traffic with outport == l3dgw_port, if the
      * packet did not match any higher priority redirect
      * rule, then the traffic is redirected to the central
      * instance of the l3dgw_port. */
-    Some{var gwport} = l3dgw_ports.nth(0) in
-    Flow(.logical_datapath = lr_uuid,
-         .stage            = s_ROUTER_IN_GW_REDIRECT(),
-         .priority         = 50,
-         .__match          = "outport == ${json_string_escape(gwport.name)}",
-         .actions          = "outport = ${json_string_escape(chassis_redirect_name(gwport.name))}; next;",
-         .external_ids     = stage_hint(gwport._uuid));
+    for (DistributedGatewayPort(lrp, lr_uuid)) {
+        Flow(.logical_datapath = lr_uuid,
+             .stage            = s_ROUTER_IN_GW_REDIRECT(),
+             .priority         = 50,
+             .__match          = "outport == ${json_string_escape(lrp.name)}",
+             .actions          = "outport = ${json_string_escape(chassis_redirect_name(lrp.name))}; next;",
+             .external_ids     = stage_hint(lrp._uuid))
+    };
 
     /* Packets are allowed by default. */
     Flow(.logical_datapath = lr_uuid,

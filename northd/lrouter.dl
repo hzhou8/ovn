@@ -216,19 +216,20 @@ HAChassisGroup(ha_chassis_group_uuid(hac_group_uuid),
                         .name = name,
                         .external_ids = external_ids).
 
-/* Each row maps from a logical router to the name of one of
+/* Each row maps from a distributed gateway logical router port to the name of
  * its HAChassisGroup.
- * This level of indirection is needed because multiple logical routers
- * are allowed to reference a given HAChassisGroup. */
-relation LogicalRouterHAChassisGroup(lr_uuid: uuid,
-                                     hacg_uuid: uuid)
-LogicalRouterHAChassisGroup(lr_uuid, ha_chassis_group_uuid(lrp._uuid)) :-
-    DistributedGatewayPort(lrp, lr_uuid),
+ * This level of indirection is needed because multiple distributed gateway
+ * logical router ports are allowed to reference a given HAChassisGroup. */
+relation DistributedGatewayPortHAChassisGroup(
+    lrp: Intern<nb::Logical_Router_Port>,
+    hacg_uuid: uuid)
+DistributedGatewayPortHAChassisGroup(lrp, ha_chassis_group_uuid(lrp._uuid)) :-
+    DistributedGatewayPort(.lrp = lrp),
     lrp.ha_chassis_group == None,
     lrp.gateway_chassis.size() > 0.
-LogicalRouterHAChassisGroup(lr_uuid,
-                            ha_chassis_group_uuid(hac_group_uuid)) :-
-    DistributedGatewayPort(lrp, lr_uuid),
+DistributedGatewayPortHAChassisGroup(lrp,
+                                     ha_chassis_group_uuid(hac_group_uuid)) :-
+    DistributedGatewayPort(.lrp = lrp),
     Some{var hac_group_uuid} = lrp.ha_chassis_group,
     nb::HA_Chassis_Group(._uuid = hac_group_uuid).
 
