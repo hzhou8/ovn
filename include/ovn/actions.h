@@ -95,6 +95,7 @@ struct ovn_extend_table;
     OVNACT(ND_NS,             ovnact_nest)            \
     OVNACT(SET_METER,         ovnact_set_meter)       \
     OVNACT(OVNFIELD_LOAD,     ovnact_load)            \
+    OVNACT(OVNFIELD_MOVE,     ovnact_move)            \
     OVNACT(CHECK_PKT_LARGER,  ovnact_check_pkt_larger) \
     OVNACT(TRIGGER_EVENT,     ovnact_controller_event) \
     OVNACT(BIND_VPORT,        ovnact_bind_vport)       \

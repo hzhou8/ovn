@@ -267,6 +267,9 @@ enum ovn_stage {
 #define REG_ECMP_GROUP_ID       "reg8[0..15]"
 #define REG_ECMP_MEMBER_ID      "reg8[16..31]"
 
+/* Register for gateway_mtu that's checked against. */
+#define REG_GW_MTU "reg8[0..15]"
+
 /* Registers used for routing. */
 #define REG_NEXT_HOP_IPV4 "reg0"
 #define REG_NEXT_HOP_IPV6 "xxreg0"
@@ -332,7 +335,13 @@ enum ovn_stage {
  * |     |                          | 3 |                 |   |               |
  * +-----+--------------------------+---+-----------------+---+---------------+
  * | R8  |     ECMP_GROUP_ID        |   |                 |
- * |     |     ECMP_MEMBER_ID       | X |                 |
+ * |     |     ECMP_MEMBER_ID       |   |                 |
+ * |     |     (>= IP_ROUTING       |   |                 |
+ * |     |      <= POLICY_ECMP)     |   |                 |
+ * |     |                          |   |                 |
+ * |     |     GW_MTU (0..15)       |   |                 |
+ * |     |     (>= CHK_PKT_LEN      |   |                 |
+ * |     |      <= LARGER_PKTS)     | X |                 |
  * +-----+--------------------------+ R |                 |
  * |     | REGBIT_{                 | E |                 |
  * |     |   EGRESS_LOOPBACK/       | G |     UNUSED      |
@@ -10892,7 +10901,7 @@ build_arp_resolve_flows_for_lrouter_port(
 }
 
 static void
-build_icmperr_pkt_big_flows(struct ovn_port *op, int mtu, struct hmap *lflows,
+build_icmperr_pkt_big_flows(struct ovn_port *op, struct hmap *lflows,
                             struct shash *meter_groups, struct ds *match,
                             struct ds *actions, enum ovn_stage stage)
 {
@@ -10914,11 +10923,11 @@ build_icmperr_pkt_big_flows(struct ovn_port *op, int mtu, struct hmap *lflows,
             "ip.ttl = 255; "
             "icmp4.type = 3; /* Destination Unreachable. */ "
             "icmp4.code = 4; /* Frag Needed and DF was Set. */ "
-            "icmp4.frag_mtu = %d; "
+            "icmp4.frag_mtu = "REG_GW_MTU"; "
             "next(pipeline=ingress, table=%d); };",
             op->lrp_networks.ea_s,
             op->lrp_networks.ipv4_addrs[0].addr_s,
-            mtu, ovn_stage_get_table(S_ROUTER_IN_ADMISSION));
+            ovn_stage_get_table(S_ROUTER_IN_ADMISSION));
         ovn_lflow_add_with_hint__(lflows, op->od, stage, 150,
                                   ds_cstr(match), ds_cstr(actions),
                                   NULL,
@@ -10946,11 +10955,11 @@ build_icmperr_pkt_big_flows(struct ovn_port *op, int mtu, struct hmap *lflows,
             "ip.ttl = 255; "
             "icmp6.type = 2; /* Packet Too Big. */ "
             "icmp6.code = 0; "
-            "icmp6.frag_mtu = %d; "
+            "icmp6.frag_mtu = "REG_GW_MTU"; "
             "next(pipeline=ingress, table=%d); };",
             op->lrp_networks.ea_s,
             op->lrp_networks.ipv6_addrs[0].addr_s,
-            mtu, ovn_stage_get_table(S_ROUTER_IN_ADMISSION));
+            ovn_stage_get_table(S_ROUTER_IN_ADMISSION));
         ovn_lflow_add_with_hint__(lflows, op->od, stage, 150,
                                   ds_cstr(match), ds_cstr(actions),
                                   NULL,
@@ -10970,8 +10979,9 @@ build_check_pkt_len_action_string(struct ovn_port *op, struct ds *actions)
     if (gw_mtu > 0) {
         /* Add the flows only if gateway_mtu is configured. */
         ds_put_format(actions,
-                      REGBIT_PKT_LARGER" = check_pkt_larger(%d); ",
-                      gw_mtu + VLAN_ETH_HEADER_LEN);
+                      REGBIT_PKT_LARGER" = check_pkt_larger(%d); "
+                      REG_GW_MTU" = %d; ",
+                      gw_mtu + VLAN_ETH_HEADER_LEN, gw_mtu);
     }
     return gw_mtu;
 }
@@ -10998,7 +11008,7 @@ build_check_pkt_len_flows_for_lrp(struct ovn_port *op,
                             &op->nbrp->header_);
 
     /* ingress traffic */
-    build_icmperr_pkt_big_flows(op, gw_mtu, lflows, meter_groups,
+    build_icmperr_pkt_big_flows(op, lflows, meter_groups,
                                 match, actions, S_ROUTER_IN_IP_INPUT);
 
     for (size_t i = 0; i < op->od->nbr->n_ports; i++) {
@@ -11009,7 +11019,7 @@ build_check_pkt_len_flows_for_lrp(struct ovn_port *op,
         }
 
         /* egress traffic */
-        build_icmperr_pkt_big_flows(rp, gw_mtu, lflows, meter_groups,
+        build_icmperr_pkt_big_flows(rp, lflows, meter_groups,
                                     match, actions, S_ROUTER_IN_LARGER_PKTS);
     }
 }
