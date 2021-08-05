@@ -1531,6 +1531,18 @@ struct ovn_port {
     struct ovs_list list;       /* In list of similar records. */
 };
 
+static bool
+is_l3dgw_port(const struct ovn_port *op)
+{
+    return op->cr_port;
+}
+
+static bool
+is_cr_port(const struct ovn_port *op)
+{
+    return op->l3dgw_port;
+}
+
 static void
 destroy_routable_addresses(struct ovn_port_routable_addresses *ra)
 {
@@ -2646,7 +2658,7 @@ get_nat_addresses(const struct ovn_port *op, size_t *n, bool routable_only)
 
         /* Determine whether this NAT rule satisfies the conditions for
          * distributed NAT processing. */
-        if (op->od->l3dgw_ports && !strcmp(nat->type, "dnat_and_snat")
+        if (op->od->n_l3dgw_ports && !strcmp(nat->type, "dnat_and_snat")
             && nat->logical_port && nat->external_mac) {
             /* Distributed NAT rule. */
             if (eth_addr_from_string(nat->external_mac, &mac)) {
@@ -2712,7 +2724,7 @@ get_nat_addresses(const struct ovn_port *op, size_t *n, bool routable_only)
     if (central_ip_address) {
         /* Gratuitous ARP for centralized NAT rules on distributed gateway
          * ports should be restricted to the gateway chassis. */
-        if (op->od->l3dgw_ports) {
+        if (op->od->n_l3dgw_ports) {
             ds_put_format(&c_addresses, " is_chassis_resident(%s)",
                           op->od->l3dgw_ports[0]->cr_port->json_key);
         }
@@ -3027,7 +3039,7 @@ ovn_port_update_sbrec(struct northd_context *ctx,
         /* If the router is for l3 gateway, it resides on a chassis
          * and its port type is "l3gateway". */
         const char *chassis_name = smap_get(&op->od->nbr->options, "chassis");
-        if (op->l3dgw_port) {
+        if (is_cr_port(op)) {
             sbrec_port_binding_set_type(op->sb, "chassisredirect");
         } else if (chassis_name) {
             sbrec_port_binding_set_type(op->sb, "l3gateway");
@@ -3037,7 +3049,7 @@ ovn_port_update_sbrec(struct northd_context *ctx,
 
         struct smap new;
         smap_init(&new);
-        if (op->l3dgw_port) {
+        if (is_cr_port(op)) {
             const char *redirect_type = smap_get(&op->nbrp->options,
                                                  "redirect-type");
 
@@ -3217,7 +3229,7 @@ ovn_port_update_sbrec(struct northd_context *ctx,
             char **nats = NULL;
             if (nat_addresses && !strcmp(nat_addresses, "router")) {
                 if (op->peer && op->peer->od
-                    && (chassis || op->peer->od->l3dgw_ports)) {
+                    && (chassis || op->peer->od->n_l3dgw_ports)) {
                     nats = get_nat_addresses(op->peer, &n_nats, false);
                 }
             /* Only accept manual specification of ethernet address
@@ -3253,8 +3265,8 @@ ovn_port_update_sbrec(struct northd_context *ctx,
              * sending the GARPs for the router port IPs.
              * */
             bool add_router_port_garp = false;
-            if (op->peer && op->peer->nbrp && op->peer->od->l3dgw_ports) {
-                if (op->peer->cr_port) {
+            if (op->peer && op->peer->nbrp && op->peer->od->n_l3dgw_ports) {
+                if (is_l3dgw_port(op->peer)) {
                     add_router_port_garp = true;
                 } else if (smap_get_bool(&op->peer->nbrp->options,
                                "reside-on-redirect-chassis", false)) {
@@ -3287,7 +3299,7 @@ ovn_port_update_sbrec(struct northd_context *ctx,
                                   op->peer->lrp_networks.ipv4_addrs[i].addr_s);
                 }
 
-                if (op->peer->od->l3dgw_ports) {
+                if (op->peer->od->n_l3dgw_ports) {
                     ds_put_format(&garp_info, " is_chassis_resident(%s)",
                                   op->peer->od->l3dgw_ports[0]
                                   ->cr_port->json_key);
@@ -6475,16 +6487,14 @@ build_lrouter_groups__(struct hmap *ports, struct ovn_datapath *od)
 {
     ovs_assert((od && od->nbr && od->lr_group));
 
-    if (od->l3dgw_ports) {
-        /* It's a logical router with gateway ports. If it
-         * has HA_Chassis_Group associated to it in SB DB, then store the
-         * ha chassis group name. */
-        for (size_t i = 0; i < od->n_l3dgw_ports; i++) {
-            struct ovn_port *crp = od->l3dgw_ports[i]->cr_port;
-            if (crp->sb->ha_chassis_group) {
-                sset_add(&od->lr_group->ha_chassis_groups,
-                         crp->sb->ha_chassis_group->name);
-            }
+    /* For logical router with distributed gateway ports. If it
+     * has HA_Chassis_Group associated to it in SB DB, then store the
+     * ha chassis group name. */
+    for (size_t i = 0; i < od->n_l3dgw_ports; i++) {
+        struct ovn_port *crp = od->l3dgw_ports[i]->cr_port;
+        if (crp->sb->ha_chassis_group) {
+            sset_add(&od->lr_group->ha_chassis_groups,
+                     crp->sb->ha_chassis_group->name);
         }
     }
 
@@ -7845,11 +7855,11 @@ build_lswitch_ip_unicast_lookup(struct ovn_port *op,
                 ds_clear(match);
                 ds_put_format(match, "eth.dst == "ETH_ADDR_FMT,
                               ETH_ADDR_ARGS(mac));
-                if (op->peer->od->l3dgw_ports
+                if (op->peer->od->n_l3dgw_ports
                     && op->od->n_localnet_ports) {
                     bool add_chassis_resident_check = false;
                     const char *json_key;
-                    if (op->peer->cr_port) {
+                    if (is_l3dgw_port(op->peer)) {
                         /* The peer of this port represents a distributed
                          * gateway port. The destination lookup flow for the
                          * router's distributed gateway port MAC address should
@@ -7887,7 +7897,7 @@ build_lswitch_ip_unicast_lookup(struct ovn_port *op,
 
                 /* Add ethernet addresses specified in NAT rules on
                  * distributed logical routers. */
-                if (op->peer->cr_port) {
+                if (is_l3dgw_port(op->peer)) {
                     for (int j = 0; j < op->peer->od->nbr->n_nat; j++) {
                         const struct nbrec_nat *nat
                                                   = op->peer->od->nbr->nat[j];
@@ -9154,7 +9164,7 @@ build_lrouter_nat_flows_for_lb(struct ovn_lb_vip *lb_vip,
                                      &lb->nlb->header_);
         }
 
-        if (od->l3dgw_ports &&
+        if (od->n_l3dgw_ports &&
             (lb_vip->n_backends || !lb_vip->empty_backend_rej)) {
             new_match_p = xasprintf("%s && is_chassis_resident(%s)",
                                     new_match,
@@ -9206,7 +9216,7 @@ build_lrouter_nat_flows_for_lb(struct ovn_lb_vip *lb_vip,
             free(est_match_p);
         }
 
-        if (!od->l3dgw_ports || !lb_vip->n_backends) {
+        if (!od->n_l3dgw_ports || !lb_vip->n_backends) {
             goto next;
         }
 
@@ -9710,7 +9720,7 @@ build_lrouter_port_nat_arp_nd_flow(struct ovn_port *op,
          * upstream MAC learning points to the gateway chassis.
          * Also need to avoid generation of multiple ARP responses
          * from different chassis. */
-        if (op->od->l3dgw_ports) {
+        if (op->od->n_l3dgw_ports) {
             ds_put_format(&match, "is_chassis_resident(%s)",
                           op->od->l3dgw_ports[0]->cr_port->json_key);
         }
@@ -9986,7 +9996,7 @@ build_adm_ctrl_flows_for_lrouter_port(
             return;
         }
 
-        if (op->l3dgw_port) {
+        if (is_cr_port(op)) {
             /* No ingress packets should be received on a chassisredirect
              * port. */
             return;
@@ -10011,7 +10021,7 @@ build_adm_ctrl_flows_for_lrouter_port(
         ds_clear(match);
         ds_put_format(match, "eth.dst == %s && inport == %s",
                       op->lrp_networks.ea_s, op->json_key);
-        if (op->cr_port) {
+        if (is_l3dgw_port(op)) {
             /* Traffic with eth.dst = l3dgw_port->lrp_networks.ea_s
              * should only be received on the gateway chassis. */
             ds_put_format(match, " && is_chassis_resident(%s)",
@@ -10154,7 +10164,7 @@ build_neigh_learning_flows_for_lrouter_port(
                               op->lrp_networks.ipv4_addrs[i].network_s,
                               op->lrp_networks.ipv4_addrs[i].plen,
                               op->lrp_networks.ipv4_addrs[i].addr_s);
-                if (op->cr_port) {
+                if (is_l3dgw_port(op)) {
                     ds_put_format(match, " && is_chassis_resident(%s)",
                                   op->cr_port->json_key);
                 }
@@ -10173,7 +10183,7 @@ build_neigh_learning_flows_for_lrouter_port(
                           op->json_key,
                           op->lrp_networks.ipv4_addrs[i].network_s,
                           op->lrp_networks.ipv4_addrs[i].plen);
-            if (op->cr_port) {
+            if (is_l3dgw_port(op)) {
                 ds_put_format(match, " && is_chassis_resident(%s)",
                               op->cr_port->json_key);
             }
@@ -10665,7 +10675,7 @@ build_arp_resolve_flows_for_lrouter_port(
             }
         }
 
-        if (op->cr_port) {
+        if (is_l3dgw_port(op)) {
             const char *redirect_type = smap_get(&op->nbrp->options,
                                                  "redirect-type");
             if (redirect_type && !strcasecmp(redirect_type, "bridged")) {
@@ -11248,7 +11258,7 @@ build_egress_delivery_flows_for_lrouter_port(
             return;
         }
 
-        if (op->l3dgw_port) {
+        if (is_cr_port(op)) {
             /* No egress packets should be processed in the context of
              * a chassisredirect port.  The chassisredirect port should
              * be replaced by the l3dgw port in the local output
@@ -11384,7 +11394,7 @@ build_ipv6_input_flows_for_lrouter_port(
          * router's own IP address. */
         for (int i = 0; i < op->lrp_networks.n_ipv6_addrs; i++) {
             ds_clear(match);
-            if (op->cr_port) {
+            if (is_l3dgw_port(op)) {
                 /* Traffic with eth.src = l3dgw_port->lrp_networks.ea_s
                  * should only be sent from the gateway chassi, so that
                  * upstream MAC learning points to the gateway chassis.
@@ -11402,7 +11412,7 @@ build_ipv6_input_flows_for_lrouter_port(
         }
 
         /* UDP/TCP/SCTP port unreachable */
-        if (!op->od->is_gw_router && !op->od->l3dgw_ports) {
+        if (!op->od->is_gw_router && !op->od->n_l3dgw_ports) {
             for (int i = 0; i < op->lrp_networks.n_ipv6_addrs; i++) {
                 ds_clear(match);
                 ds_put_format(match,
@@ -11642,11 +11652,11 @@ build_lrouter_ipv4_ip_input(struct ovn_port *op,
                           op->lrp_networks.ipv4_addrs[i].network_s,
                           op->lrp_networks.ipv4_addrs[i].plen);
 
-            if (op->od->l3dgw_ports && op->peer
+            if (op->od->n_l3dgw_ports && op->peer
                 && op->peer->od->n_localnet_ports) {
                 bool add_chassis_resident_check = false;
                 const char *json_key;
-                if (op->cr_port) {
+                if (is_l3dgw_port(op)) {
                     /* Traffic with eth.src = l3dgw_port->lrp_networks.ea_s
                      * should only be sent from the gateway chassis, so that
                      * upstream MAC learning points to the gateway chassis.
@@ -11685,7 +11695,7 @@ build_lrouter_ipv4_ip_input(struct ovn_port *op,
         const char *ip_address;
         if (sset_count(&op->od->lb_ips_v4)) {
             ds_clear(match);
-            if (op->cr_port) {
+            if (is_l3dgw_port(op)) {
                 ds_put_format(match, "is_chassis_resident(%s)",
                               op->cr_port->json_key);
             }
@@ -11705,7 +11715,7 @@ build_lrouter_ipv4_ip_input(struct ovn_port *op,
 
         SSET_FOR_EACH (ip_address, &op->od->lb_ips_v6) {
             ds_clear(match);
-            if (op->cr_port) {
+            if (is_l3dgw_port(op)) {
                 ds_put_format(match, "is_chassis_resident(%s)",
                               op->cr_port->json_key);
             }
@@ -11716,7 +11726,7 @@ build_lrouter_ipv4_ip_input(struct ovn_port *op,
                                   lflows, meter_groups);
         }
 
-        if (!op->od->is_gw_router && !op->od->l3dgw_ports) {
+        if (!op->od->is_gw_router && !op->od->n_l3dgw_ports) {
             /* UDP/TCP/SCTP port unreachable. */
             for (int i = 0; i < op->lrp_networks.n_ipv4_addrs; i++) {
                 ds_clear(match);
@@ -11813,7 +11823,7 @@ build_lrouter_ipv4_ip_input(struct ovn_port *op,
          * exception is on the l3dgw_port where we might need to use a
          * different ETH address.
          */
-        if (!op->cr_port) {
+        if (!is_l3dgw_port(op)) {
             return;
         }
 
@@ -11896,7 +11906,7 @@ build_lrouter_in_unsnat_flow(struct hmap *lflows, struct ovn_datapath *od,
         ds_put_format(match, "ip && ip%s.dst == %s && inport == %s",
                       is_v6 ? "6" : "4", nat->external_ip,
                       od->l3dgw_ports[0]->json_key);
-        if (!distributed && od->l3dgw_ports) {
+        if (!distributed && od->n_l3dgw_ports) {
             /* Flows for NAT rules that are centralized are only
             * programmed on the gateway chassis. */
             ds_put_format(match, " && is_chassis_resident(%s)",
@@ -11973,7 +11983,7 @@ build_lrouter_in_dnat_flow(struct hmap *lflows, struct ovn_datapath *od,
             ds_put_format(match, "ip && ip%s.dst == %s && inport == %s",
                           is_v6 ? "6" : "4", nat->external_ip,
                           od->l3dgw_ports[0]->json_key);
-            if (!distributed && od->l3dgw_ports) {
+            if (!distributed && od->n_l3dgw_ports) {
                 /* Flows for NAT rules that are centralized are only
                 * programmed on the gateway chassis. */
                 ds_put_format(match, " && is_chassis_resident(%s)",
@@ -12016,7 +12026,7 @@ build_lrouter_out_undnat_flow(struct hmap *lflows, struct ovn_datapath *od,
     *
     * Note that this only applies for NAT on a distributed router.
     */
-    if (!od->l3dgw_ports ||
+    if (!od->n_l3dgw_ports ||
         (strcmp(nat->type, "dnat") && strcmp(nat->type, "dnat_and_snat"))) {
         return;
     }
@@ -12025,7 +12035,7 @@ build_lrouter_out_undnat_flow(struct hmap *lflows, struct ovn_datapath *od,
     ds_put_format(match, "ip && ip%s.src == %s && outport == %s",
                   is_v6 ? "6" : "4", nat->logical_ip,
                   od->l3dgw_ports[0]->json_key);
-    if (!distributed && od->l3dgw_ports) {
+    if (!distributed && od->n_l3dgw_ports) {
         /* Flows for NAT rules that are centralized are only
         * programmed on the gateway chassis. */
         ds_put_format(match, " && is_chassis_resident(%s)",
@@ -12103,7 +12113,7 @@ build_lrouter_out_snat_flow(struct hmap *lflows, struct ovn_datapath *od,
         ds_put_format(match, "ip && ip%s.src == %s && outport == %s",
                       is_v6 ? "6" : "4", nat->logical_ip,
                       od->l3dgw_ports[0]->json_key);
-        if (!distributed && od->l3dgw_ports) {
+        if (!distributed && od->n_l3dgw_ports) {
             /* Flows for NAT rules that are centralized are only
             * programmed on the gateway chassis. */
             priority += 128;
@@ -12149,7 +12159,7 @@ build_lrouter_ingress_flow(struct hmap *lflows, struct ovn_datapath *od,
                            struct ds *actions, struct eth_addr mac,
                            bool distributed, bool is_v6)
 {
-    if (od->l3dgw_ports && !strcmp(nat->type, "snat")) {
+    if (od->n_l3dgw_ports && !strcmp(nat->type, "snat")) {
         ds_clear(match);
         ds_put_format(
             match, "inport == %s && %s == %s",
@@ -12262,7 +12272,7 @@ lrouter_check_nat_entry(struct ovn_datapath *od, const struct nbrec_nat *nat,
     /* For distributed router NAT, determine whether this NAT rule
      * satisfies the conditions for distributed NAT processing. */
     *distributed = false;
-    if (od->l3dgw_ports && !strcmp(nat->type, "dnat_and_snat") &&
+    if (od->n_l3dgw_ports && !strcmp(nat->type, "dnat_and_snat") &&
         nat->logical_port && nat->external_mac) {
         if (eth_addr_from_string(nat->external_mac, mac)) {
             *distributed = true;
@@ -12307,7 +12317,7 @@ build_lrouter_nat_defrag_and_lb(struct ovn_datapath *od, struct hmap *lflows,
      * not committed, it would produce ongoing datapath flows with the ct.new
      * flag set. Some NICs are unable to offload these flows.
      */
-    if ((od->is_gw_router || od->l3dgw_ports) &&
+    if ((od->is_gw_router || od->n_l3dgw_ports) &&
         (od->nbr->n_nat || od->nbr->n_load_balancer)) {
         ovn_lflow_add(lflows, od, S_ROUTER_OUT_UNDNAT, 50,
                       "ip", "flags.loopback = 1; ct_dnat;");
@@ -12323,7 +12333,7 @@ build_lrouter_nat_defrag_and_lb(struct ovn_datapath *od, struct hmap *lflows,
     /* NAT rules are only valid on Gateway routers and routers with
      * l3dgw_port (router has a port with gateway chassis
      * specified). */
-    if (!od->is_gw_router && !od->l3dgw_ports) {
+    if (!od->is_gw_router && !od->n_l3dgw_ports) {
         return;
     }
 
@@ -12434,7 +12444,7 @@ build_lrouter_nat_defrag_and_lb(struct ovn_datapath *od, struct hmap *lflows,
          * gateway port have ip.dst matching a NAT external IP, then
          * loop a clone of the packet back to the beginning of the
          * ingress pipeline with inport = outport. */
-        if (od->l3dgw_ports) {
+        if (od->n_l3dgw_ports) {
             /* Distributed router. */
             ds_clear(match);
             ds_put_format(match, "ip%s.dst == %s && outport == %s",
