@@ -1410,10 +1410,8 @@ add_lb_vip_hairpin_flows(struct ovn_controller_lb *lb,
      * - the destination protocol and port must be of a valid backend that
      *   has the same IP as ip.dst.
      */
-    ovs_u128 lb_ct_label = {
-        .u64.lo = OVN_CT_NATTED,
-    };
-    match_set_ct_label_masked(&hairpin_match, lb_ct_label, lb_ct_label);
+    uint32_t lb_ct_mark = OVN_CT_NATTED;
+    match_set_ct_mark_masked(&hairpin_match, lb_ct_mark, lb_ct_mark);
 
     ofctrl_add_flow(flow_table, OFTABLE_CHK_LB_HAIRPIN, 100,
                     lb->slb->header_.uuid.parts[0], &hairpin_match,

@@ -1513,6 +1513,36 @@ execute_exchange(const struct ovnact_move *move, struct flow *uflow,
 }
 
 static void
+execute_push(const struct ovnact_push_pop *p, struct flow *uflow OVS_UNUSED,
+             struct ovs_list *super)
+{
+    struct ds s = DS_EMPTY_INITIALIZER;
+    ds_put_cstr(&s, "push(");
+    expr_field_format(&p->field, &s);
+    ds_put_cstr(&s, ")/*TODO*/");
+    /* TODO */
+
+    ovntrace_node_append(super, OVNTRACE_NODE_MODIFY, "%s", ds_cstr(&s));
+
+    ds_destroy(&s);
+}
+
+static void
+execute_pop(const struct ovnact_push_pop *p, struct flow *uflow OVS_UNUSED,
+            struct ovs_list *super)
+{
+    struct ds s = DS_EMPTY_INITIALIZER;
+    ds_put_cstr(&s, "pop(");
+    expr_field_format(&p->field, &s);
+    ds_put_cstr(&s, ")/*TODO*/");
+    /* TODO */
+
+    ovntrace_node_append(super, OVNTRACE_NODE_MODIFY, "%s", ds_cstr(&s));
+
+    ds_destroy(&s);
+}
+
+static void
 trace__(const struct ovntrace_datapath *dp, struct flow *uflow,
         uint8_t table_id, enum ovnact_pipeline pipeline,
         struct ovs_list *super);
@@ -2564,6 +2594,14 @@ trace_actions(const struct ovnact *ovnacts, size_t ovnacts_len,
 
         case OVNACT_EXCHANGE:
             execute_exchange(ovnact_get_EXCHANGE(a), uflow, super);
+            break;
+
+        case OVNACT_PUSH:
+            execute_push(ovnact_get_PUSH(a), uflow, super);
+            break;
+
+        case OVNACT_POP:
+            execute_pop(ovnact_get_PUSH(a), uflow, super);
             break;
 
         case OVNACT_DEC_TTL:
