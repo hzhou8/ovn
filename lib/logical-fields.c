@@ -129,6 +129,18 @@ ovn_init_symtab(struct shash *symtab)
     /* Connection tracking state. */
     expr_symtab_add_field_scoped(symtab, "ct_mark", MFF_CT_MARK, NULL, false,
                                  WR_CT_COMMIT);
+    expr_symtab_add_subfield_scoped(symtab, "ct_mark.blocked", NULL,
+                                    "ct_mark["
+                                        OVN_CT_STR(OVN_CT_BLOCKED_BIT)
+                                    "]",
+                                    WR_CT_COMMIT);
+    expr_symtab_add_subfield_scoped(symtab, "ct_mark.natted", NULL,
+                                    "ct_mark["
+                                        OVN_CT_STR(OVN_CT_NATTED_BIT)
+                                    "]",
+                                    WR_CT_COMMIT);
+    expr_symtab_add_subfield_scoped(symtab, "ct_mark.ecmp_reply_port", NULL,
+                                    "ct_mark[16..31]", WR_CT_COMMIT);
 
     expr_symtab_add_field_scoped(symtab, "ct_label", MFF_CT_LABEL, NULL,
                                  false, WR_CT_COMMIT);
