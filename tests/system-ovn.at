@@ -4418,8 +4418,8 @@ OVS_WAIT_UNTIL([test 2 = `ovn-sbctl --bare --columns status find \
 service_monitor | sed '/^$/d' | grep online | wc -l`])
 
 OVS_WAIT_UNTIL(
-    [ovn-sbctl dump-flows sw0 | grep ct_lb | grep priority=120 | grep "ip4.dst == 10.0.0.10" > lflows.txt
-     test 1 = `cat lflows.txt | grep "ct_lb(backends=10.0.0.3:80,20.0.0.3:80)" | wc -l`]
+    [ovn-sbctl dump-flows sw0 | grep ct_lb_mark | grep priority=120 | grep "ip4.dst == 10.0.0.10" > lflows.txt
+     test 1 = `cat lflows.txt | grep "ct_lb_mark(backends=10.0.0.3:80,20.0.0.3:80)" | wc -l`]
 )
 
 # From sw0-p2 send traffic to vip - 10.0.0.10
@@ -4444,8 +4444,8 @@ OVS_WAIT_UNTIL([test 1 = `ovn-sbctl --bare --columns status find \
 service_monitor logical_port=sw0-p1 | sed '/^$/d' | grep offline | wc -l`])
 
 OVS_WAIT_UNTIL(
-    [ovn-sbctl dump-flows sw0 | grep ct_lb | grep priority=120 | grep "ip4.dst == 10.0.0.10" > lflows.txt
-     test 1 = `cat lflows.txt | grep "ct_lb(backends=20.0.0.3:80)" | wc -l`]
+    [ovn-sbctl dump-flows sw0 | grep ct_lb_mark | grep priority=120 | grep "ip4.dst == 10.0.0.10" > lflows.txt
+     test 1 = `cat lflows.txt | grep "ct_lb_mark(backends=20.0.0.3:80)" | wc -l`]
 )
 
 ovs-appctl dpctl/flush-conntrack
