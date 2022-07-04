@@ -536,25 +536,10 @@
     </p>
     <ul>
       <li>
-        Priority-120 flows that send the packets to connection tracker using
-        <code>ct_lb_mark;</code> as the action so that the already established
-        traffic destined to the load balancer VIP gets DNATted based on a hint
-        provided by the previous tables (with a match
-        for <code>reg0[2] == 1</code> and on supported load balancer protocols
-        and address families).  For IPv4 traffic the flows also load the
-        original destination IP and transport port in registers
-        <code>reg1</code> and <code>reg2</code>.  For IPv6 traffic the flows
-        also load the original destination IP and transport port in
-        registers <code>xxreg1</code> and <code>reg2</code>.
-      </li>
-
-      <li>
          A priority-110 flow sends the packets to connection tracker based
          on a hint provided by the previous tables
          (with a match for <code>reg0[2] == 1</code>) by using the
-         <code>ct_lb_mark;</code> action.  This flow is added to handle
-         the traffic for load balancer VIPs whose protocol is not defined
-         (mainly for ICMP traffic).
+         <code>ct_lb_mark;</code> action.
       </li>
 
       <li>
@@ -877,11 +862,7 @@
         of <var>VIP</var>. If health check is enabled, then <var>args</var>
         will only contain those endpoints whose service monitor status entry
         in <code>OVN_Southbound</code> db is either <code>online</code> or
-        empty.  For IPv4 traffic the flow also loads the original destination
-        IP and transport port in registers <code>reg1</code> and
-        <code>reg2</code>.  For IPv6 traffic the flow also loads the original
-        destination IP and transport port in registers <code>xxreg1</code> and
-        <code>reg2</code>.
+        empty.
         The above flow is created even if the load balancer is attached to a
         logical router connected to the current logical switch and
         the <code>install_ls_lb_from_router</code> variable in
@@ -897,11 +878,6 @@
         VIP</var></code>. The action on this flow is <code>
         ct_lb_mark(<var>args</var>)</code>, where <var>args</var> contains comma
         separated IP addresses of the same address family as <var>VIP</var>.
-        For IPv4 traffic the flow also loads the original destination
-        IP and transport port in registers <code>reg1</code> and
-        <code>reg2</code>.  For IPv6 traffic the flow also loads the original
-        destination IP and transport port in registers <code>xxreg1</code> and
-        <code>reg2</code>.
         The above flow is created even if the load balancer is attached to a
         logical router connected to the current logical switch and
         the <code>install_ls_lb_from_router</code> variable in
@@ -1919,7 +1895,7 @@ output;
 
     <ul>
       <li>
-        A Priority-120 flow that send the packets to connection tracker using
+        A Priority-110 flow that send the packets to connection tracker using
         <code>ct_lb_mark;</code> as the action so that the already established
         traffic gets unDNATted from the backend IP to the load balancer VIP
         based on a hint provided by the previous tables with a match

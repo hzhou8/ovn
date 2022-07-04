@@ -211,10 +211,6 @@ enum ovn_stage {
 #define REGBIT_FROM_RAMP          "reg0[14]"
 #define REGBIT_PORT_SEC_DROP      "reg0[15]"
 
-#define REG_ORIG_DIP_IPV4         "reg1"
-#define REG_ORIG_DIP_IPV6         "xxreg1"
-#define REG_ORIG_TP_DPORT         "reg2[0..15]"
-
 /* Register definitions for switches and routers. */
 
 /* Indicate that this packet has been recirculated using egress
@@ -266,26 +262,26 @@ enum ovn_stage {
  * OVS register usage:
  *
  * Logical Switch pipeline:
- * +----+----------------------------------------------+---+------------------+
- * | R0 |     REGBIT_{CONNTRACK/DHCP/DNS}              |   |                  |
- * |    |     REGBIT_{HAIRPIN/HAIRPIN_REPLY}           |   |                  |
- * |    | REGBIT_ACL_HINT_{ALLOW_NEW/ALLOW/DROP/BLOCK} |   |                  |
- * |    |     REGBIT_ACL_LABEL                         | X |                  |
- * +----+----------------------------------------------+ X |                  |
- * | R1 |         ORIG_DIP_IPV4 (>= IN_STATEFUL)       | R |                  |
- * +----+----------------------------------------------+ E |                  |
- * | R2 |         ORIG_TP_DPORT (>= IN_STATEFUL)       | G |                  |
- * +----+----------------------------------------------+ 0 |                  |
- * | R3 |                  ACL LABEL                   |   |                  |
- * +----+----------------------------------------------+---+------------------+
- * | R4 |                   UNUSED                     |   |                  |
- * +----+----------------------------------------------+ X |   ORIG_DIP_IPV6  |
- * | R5 |                   UNUSED                     | X | (>= IN_STATEFUL) |
- * +----+----------------------------------------------+ R |                  |
- * | R6 |                   UNUSED                     | E |                  |
- * +----+----------------------------------------------+ G |                  |
- * | R7 |                   UNUSED                     | 1 |                  |
- * +----+----------------------------------------------+---+------------------+
+ * +----+----------------------------------------------+
+ * | R0 |     REGBIT_{CONNTRACK/DHCP/DNS}              |
+ * |    |     REGBIT_{HAIRPIN/HAIRPIN_REPLY}           |
+ * |    | REGBIT_ACL_HINT_{ALLOW_NEW/ALLOW/DROP/BLOCK} |
+ * |    |     REGBIT_ACL_LABEL                         |
+ * +----+----------------------------------------------+
+ * | R1 |                   UNUSED                     |
+ * +----+----------------------------------------------+
+ * | R2 |                   UNUSED                     |
+ * +----+----------------------------------------------+
+ * | R3 |                  ACL LABEL                   |
+ * +----+----------------------------------------------+
+ * | R4 |                   UNUSED                     |
+ * +----+----------------------------------------------+
+ * | R5 |                   UNUSED                     |
+ * +----+----------------------------------------------+
+ * | R6 |                   UNUSED                     |
+ * +----+----------------------------------------------+
+ * | R7 |                   UNUSED                     |
+ * +----+----------------------------------------------+
  * | R8 |                   UNUSED                     |
  * +----+----------------------------------------------+
  * | R9 |                   UNUSED                     |
@@ -4288,7 +4284,7 @@ sync_lbs(struct northd_input *input_data, struct ovsdb_idl_txn *ovnsb_txn,
          */
         struct smap options;
         smap_clone(&options, &lb->nlb->options);
-        smap_replace(&options, "hairpin_orig_tuple", "true");
+        smap_replace(&options, "hairpin_orig_tuple", "false");
 
         struct sbrec_datapath_binding **lb_dps =
             xmalloc(lb->n_nb_ls * sizeof *lb_dps);
@@ -5917,42 +5913,14 @@ build_pre_stateful(struct ovn_datapath *od,
     ovn_lflow_add(lflows, od, S_SWITCH_OUT_PRE_STATEFUL, 0, "1", "next;");
 
     const char *ct_lb_action = features->ct_no_masked_label
-                               ? "ct_lb_mark"
-                               : "ct_lb";
-    const char *lb_protocols[] = {"tcp", "udp", "sctp"};
-    struct ds actions = DS_EMPTY_INITIALIZER;
-    struct ds match = DS_EMPTY_INITIALIZER;
-
-    for (size_t i = 0; i < ARRAY_SIZE(lb_protocols); i++) {
-        ds_clear(&match);
-        ds_clear(&actions);
-        ds_put_format(&match, REGBIT_CONNTRACK_NAT" == 1 && ip4 && %s",
-                      lb_protocols[i]);
-        ds_put_format(&actions, REG_ORIG_DIP_IPV4 " = ip4.dst; "
-                                REG_ORIG_TP_DPORT " = %s.dst; %s;",
-                      lb_protocols[i], ct_lb_action);
-        ovn_lflow_add(lflows, od, S_SWITCH_IN_PRE_STATEFUL, 120,
-                      ds_cstr(&match), ds_cstr(&actions));
-
-        ds_clear(&match);
-        ds_clear(&actions);
-        ds_put_format(&match, REGBIT_CONNTRACK_NAT" == 1 && ip6 && %s",
-                      lb_protocols[i]);
-        ds_put_format(&actions, REG_ORIG_DIP_IPV6 " = ip6.dst; "
-                                REG_ORIG_TP_DPORT " = %s.dst; %s;",
-                      lb_protocols[i], ct_lb_action);
-        ovn_lflow_add(lflows, od, S_SWITCH_IN_PRE_STATEFUL, 120,
-                      ds_cstr(&match), ds_cstr(&actions));
-    }
-
-    ds_clear(&actions);
-    ds_put_format(&actions, "%s;", ct_lb_action);
+                               ? "ct_lb_mark;"
+                               : "ct_lb;";
 
     ovn_lflow_add(lflows, od, S_SWITCH_IN_PRE_STATEFUL, 110,
-                  REGBIT_CONNTRACK_NAT" == 1", ds_cstr(&actions));
+                  REGBIT_CONNTRACK_NAT" == 1", ct_lb_action);
 
     ovn_lflow_add(lflows, od, S_SWITCH_OUT_PRE_STATEFUL, 110,
-                  REGBIT_CONNTRACK_NAT" == 1", ds_cstr(&actions));
+                  REGBIT_CONNTRACK_NAT" == 1", ct_lb_action);
 
     /* If REGBIT_CONNTRACK_DEFRAG is set as 1, then the packets should be
      * sent to conntrack for tracking and defragmentation. */
@@ -5961,9 +5929,6 @@ build_pre_stateful(struct ovn_datapath *od,
 
     ovn_lflow_add(lflows, od, S_SWITCH_OUT_PRE_STATEFUL, 100,
                   REGBIT_CONNTRACK_DEFRAG" == 1", "ct_next;");
-
-    ds_destroy(&actions);
-    ds_destroy(&match);
 }
 
 static void
@@ -6879,12 +6844,8 @@ build_lb_rules(struct hmap *lflows, struct ovn_northd_lb *lb, bool ct_lb_mark,
          */
         if (IN6_IS_ADDR_V4MAPPED(&lb_vip->vip)) {
             ip_match = "ip4";
-            ds_put_format(action, REG_ORIG_DIP_IPV4 " = %s; ",
-                          lb_vip->vip_str);
         } else {
             ip_match = "ip6";
-            ds_put_format(action, REG_ORIG_DIP_IPV6 " = %s; ",
-                          lb_vip->vip_str);
         }
 
         const char *proto = NULL;
@@ -6897,12 +6858,6 @@ build_lb_rules(struct hmap *lflows, struct ovn_northd_lb *lb, bool ct_lb_mark,
                     proto = "sctp";
                 }
             }
-
-            /* Store the original destination port to be used when generating
-             * hairpin flows.
-             */
-            ds_put_format(action, REG_ORIG_TP_DPORT " = %"PRIu16"; ",
-                          lb_vip->vip_port);
         }
 
         /* New connections in Ingress table. */
