@@ -489,6 +489,17 @@ get_ovs_chassis_id(const struct ovsrec_open_vswitch_table *ovs_table)
     return chassis_id;
 }
 
+static bool
+get_allow_vips_share_hairpin_backend(
+    const struct ovsrec_open_vswitch_table *ovs_table)
+{
+    const struct ovsrec_open_vswitch *cfg
+        = ovsrec_open_vswitch_table_first(ovs_table);
+    return cfg ? smap_get_bool(&cfg->external_ids,
+                               "ovn-allow-vips-share-hairpin-backend", true)
+               : true;
+}
+
 static void
 update_ssl_config(const struct ovsrec_ssl_table *ssl_table)
 {
@@ -2576,6 +2587,8 @@ init_lflow_ctx(struct engine_node *node,
     l_ctx_in->binding_lports = &rt_data->lbinding_data.lports;
     l_ctx_in->chassis_tunnels = &non_vif_data->chassis_tunnels;
     l_ctx_in->lb_hairpin_use_ct_mark = n_opts->lb_hairpin_use_ct_mark;
+    l_ctx_in->lb_hairpin_check_ct_dst =
+        get_allow_vips_share_hairpin_backend(ovs_table);
 
     l_ctx_out->flow_table = &fo->flow_table;
     l_ctx_out->group_table = &fo->group_table;

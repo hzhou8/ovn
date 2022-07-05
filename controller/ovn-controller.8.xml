@@ -352,6 +352,16 @@
         heplful to pin source outer IP for the tunnel when multiple interfaces
         are used on the host for overlay traffic.
       </dd>
+      <dt><code>external_ids:ovn-allow-vips-share-hairpin-backend</code></dt>
+      <dd>
+        If it is set to false, the behavior is undefined for hairpin traffic
+        when two or more LB VIPs share the same hairpin backend. The default
+        value is true - allowed. However, when set to true, there will be
+        flows that are not HW-offload friendly. So, for deployments that do not
+        require multiple LB VIPs sharing same backends for hairpin traffic, it
+        is recommended to set this to false to be able to better utilize HW
+        offload capabilities.
+      </dd>
     </dl>
 
     <p>

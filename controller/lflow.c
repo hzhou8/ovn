@@ -1939,6 +1939,7 @@ add_lb_vip_hairpin_flows(struct ovn_controller_lb *lb,
                          struct ovn_lb_backend *lb_backend,
                          uint8_t lb_proto,
                          bool use_ct_mark,
+                         bool check_ct_dst,
                          struct ovn_desired_flow_table *flow_table)
 {
     uint64_t stub[1024 / 8];
@@ -1949,11 +1950,24 @@ add_lb_vip_hairpin_flows(struct ovn_controller_lb *lb,
     put_load(&value, sizeof value, MFF_LOG_FLAGS,
              MLF_LOOKUP_LB_HAIRPIN_BIT, 1, &ofpacts);
 
-    /* Matching on ct_nw_dst()/ct_ipv6_dst()/ct_tp_dst() requires matching
-     * on ct_state first.
+    /* To detect the hairpin flow accurately, the CT dst IP and ports need to
+     * be matched, to distingiush when more than one VIPs share the same
+     * hairpin backend ip+port.
+     *
+     * Matching on ct_nw_dst()/ct_ipv6_dst()/ct_tp_dst() requires matching
+     * on ct_state == DNAT first.
+     *
+     * However, matching ct_state == DNAT may prevent the flows being
+     * offloaded to HW. The option "check_ct_dst" (default to true) is
+     * provided to disable this check and the related CT fields, so that for
+     * environments that doesn't require support of VIPs sharing same backends
+     * can fully utilize HW offload capability for better performance.
      */
-    uint32_t ct_state = OVS_CS_F_TRACKED | OVS_CS_F_DST_NAT;
-    match_set_ct_state_masked(&hairpin_match, ct_state, ct_state);
+
+    if (check_ct_dst) {
+        uint32_t ct_state = OVS_CS_F_TRACKED | OVS_CS_F_DST_NAT;
+        match_set_ct_state_masked(&hairpin_match, ct_state, ct_state);
+    }
 
     if (IN6_IS_ADDR_V4MAPPED(&lb_vip->vip)) {
         ovs_be32 bip4 = in6_addr_get_mapped_ipv4(&lb_backend->ip);
@@ -1965,7 +1979,9 @@ add_lb_vip_hairpin_flows(struct ovn_controller_lb *lb,
         match_set_dl_type(&hairpin_match, htons(ETH_TYPE_IP));
         match_set_nw_src(&hairpin_match, bip4);
         match_set_nw_dst(&hairpin_match, bip4);
-        match_set_ct_nw_dst(&hairpin_match, vip4);
+        if (check_ct_dst) {
+            match_set_ct_nw_dst(&hairpin_match, vip4);
+        }
 
         add_lb_vip_hairpin_reply_action(NULL, snat_vip4, lb_proto,
                                         lb_backend->port,
@@ -1980,7 +1996,9 @@ add_lb_vip_hairpin_flows(struct ovn_controller_lb *lb,
         match_set_dl_type(&hairpin_match, htons(ETH_TYPE_IPV6));
         match_set_ipv6_src(&hairpin_match, bip6);
         match_set_ipv6_dst(&hairpin_match, bip6);
-        match_set_ct_ipv6_dst(&hairpin_match, &lb_vip->vip);
+        if (check_ct_dst) {
+            match_set_ct_ipv6_dst(&hairpin_match, &lb_vip->vip);
+        }
 
         add_lb_vip_hairpin_reply_action(snat_vip6, 0, lb_proto,
                                         lb_backend->port,
@@ -1991,8 +2009,10 @@ add_lb_vip_hairpin_flows(struct ovn_controller_lb *lb,
     if (lb_backend->port) {
         match_set_nw_proto(&hairpin_match, lb_proto);
         match_set_tp_dst(&hairpin_match, htons(lb_backend->port));
-        match_set_ct_nw_proto(&hairpin_match, lb_proto);
-        match_set_ct_tp_dst(&hairpin_match, htons(lb_vip->vip_port));
+        if (check_ct_dst) {
+            match_set_ct_nw_proto(&hairpin_match, lb_proto);
+            match_set_ct_tp_dst(&hairpin_match, htons(lb_vip->vip_port));
+        }
     }
 
     /* In the original direction, only match on traffic that was already
@@ -2279,7 +2299,7 @@ add_lb_ct_snat_hairpin_flows(struct ovn_controller_lb *lb,
 static void
 consider_lb_hairpin_flows(const struct sbrec_load_balancer *sbrec_lb,
                           const struct hmap *local_datapaths,
-                          bool use_ct_mark,
+                          bool use_ct_mark, bool check_ct_dst,
                           struct ovn_desired_flow_table *flow_table,
                           struct simap *ids)
 {
@@ -2319,7 +2339,7 @@ consider_lb_hairpin_flows(const struct sbrec_load_balancer *sbrec_lb,
             struct ovn_lb_backend *lb_backend = &lb_vip->backends[j];
 
             add_lb_vip_hairpin_flows(lb, lb_vip, lb_backend, lb_proto,
-                                     use_ct_mark, flow_table);
+                                     use_ct_mark, check_ct_dst, flow_table);
         }
     }
 
@@ -2333,6 +2353,7 @@ consider_lb_hairpin_flows(const struct sbrec_load_balancer *sbrec_lb,
 static void
 add_lb_hairpin_flows(const struct sbrec_load_balancer_table *lb_table,
                      const struct hmap *local_datapaths, bool use_ct_mark,
+                     bool check_ct_dst,
                      struct ovn_desired_flow_table *flow_table,
                      struct simap *ids,
                      struct id_pool *pool)
@@ -2356,7 +2377,7 @@ add_lb_hairpin_flows(const struct sbrec_load_balancer_table *lb_table,
             simap_put(ids, lb->name, id);
         }
         consider_lb_hairpin_flows(lb, local_datapaths, use_ct_mark,
-                                  flow_table, ids);
+                                  check_ct_dst, flow_table, ids);
     }
 }
 
@@ -2494,6 +2515,7 @@ lflow_run(struct lflow_ctx_in *l_ctx_in, struct lflow_ctx_out *l_ctx_out)
                        l_ctx_out->flow_table);
     add_lb_hairpin_flows(l_ctx_in->lb_table, l_ctx_in->local_datapaths,
                          l_ctx_in->lb_hairpin_use_ct_mark,
+                         l_ctx_in->lb_hairpin_check_ct_dst,
                          l_ctx_out->flow_table,
                          l_ctx_out->hairpin_lb_ids,
                          l_ctx_out->hairpin_id_pool);
@@ -2658,6 +2680,7 @@ lflow_add_flows_for_datapath(const struct sbrec_datapath_binding *dp,
     for (size_t i = 0; i < n_dp_lbs; i++) {
         consider_lb_hairpin_flows(dp_lbs[i], l_ctx_in->local_datapaths,
                                   l_ctx_in->lb_hairpin_use_ct_mark,
+                                  l_ctx_in->lb_hairpin_check_ct_dst,
                                   l_ctx_out->flow_table,
                                   l_ctx_out->hairpin_lb_ids);
     }
@@ -2789,6 +2812,7 @@ lflow_handle_changed_lbs(struct lflow_ctx_in *l_ctx_in,
                  UUID_ARGS(&lb->header_.uuid));
         consider_lb_hairpin_flows(lb, l_ctx_in->local_datapaths,
                                   l_ctx_in->lb_hairpin_use_ct_mark,
+                                  l_ctx_in->lb_hairpin_check_ct_dst,
                                   l_ctx_out->flow_table,
                                   l_ctx_out->hairpin_lb_ids);
     }

@@ -161,6 +161,7 @@ struct lflow_ctx_in {
     const struct shash *binding_lports;
     const struct hmap *chassis_tunnels;
     bool lb_hairpin_use_ct_mark;
+    bool lb_hairpin_check_ct_dst;
 };
 
 struct lflow_ctx_out {
