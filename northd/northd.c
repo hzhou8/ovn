@@ -2651,6 +2651,9 @@ join_logical_ports(const struct sbrec_port_binding_table *sbrec_pb_table,
             parse_lsp_addrs(op);
 
             op->od = od;
+            if (op->has_unknown) {
+                od->has_unknown = true;
+            }
             hmap_insert(&od->ports, &op->dp_node,
                         hmap_node_hash(&op->key_node));
             tag_alloc_add_existing_tags(tag_alloc_table, nbsp);
@@ -6250,6 +6253,8 @@ build_lswitch_learn_fdb_od(
     ovs_assert(od->nbs);
     ovn_lflow_add(lflows, od, S_SWITCH_IN_LOOKUP_FDB, 0, "1", "next;");
     ovn_lflow_add(lflows, od, S_SWITCH_IN_PUT_FDB, 0, "1", "next;");
+    ovn_lflow_add(lflows, od, S_SWITCH_IN_L2_LKUP, 0, "1",
+                  "outport = get_fdb(eth.dst); next;");
 }
 
 /* Egress tables 8: Egress port security - IP (priority 0)
@@ -8857,36 +8862,20 @@ is_vlan_transparent(const struct ovn_datapath *od)
 }
 
 static void
-build_lswitch_flows(const struct ovn_datapaths *ls_datapaths,
-                    struct hmap *lflows)
+build_lswitch_lflows_l2_unknown(struct ovn_datapath *od,
+                                struct hmap *lflows)
 {
-    /* This flow table structure is documented in ovn-northd(8), so please
-     * update ovn-northd.8.xml if you change anything. */
-
-    struct ovn_datapath *od;
-
-    /* Ingress table 25/26: Destination lookup for unknown MACs
-     * (priority 0). */
-    HMAP_FOR_EACH (od, key_node, &ls_datapaths->datapaths) {
-        if (!od->nbs) {
-            continue;
-        }
-
-        ovn_lflow_add(lflows, od, S_SWITCH_IN_L2_LKUP, 0, "1",
-                      "outport = get_fdb(eth.dst); next;");
-
-        if (od->has_unknown) {
-            ovn_lflow_add(lflows, od, S_SWITCH_IN_L2_UNKNOWN, 50,
-                          "outport == \"none\"",
-                          "outport = \""MC_UNKNOWN "\"; output;");
-        } else {
-            ovn_lflow_add(lflows, od, S_SWITCH_IN_L2_UNKNOWN, 50,
-                          "outport == \"none\"",  debug_drop_action());
-        }
-        ovn_lflow_add(lflows, od, S_SWITCH_IN_L2_UNKNOWN, 0, "1",
-                      "output;");
+    /* Ingress table 25/26: Destination lookup for unknown MACs. */
+    if (od->has_unknown) {
+        ovn_lflow_add(lflows, od, S_SWITCH_IN_L2_UNKNOWN, 50,
+                      "outport == \"none\"",
+                      "outport = \""MC_UNKNOWN "\"; output;");
+    } else {
+        ovn_lflow_add(lflows, od, S_SWITCH_IN_L2_UNKNOWN, 50,
+                      "outport == \"none\"",  debug_drop_action());
     }
-
+    ovn_lflow_add(lflows, od, S_SWITCH_IN_L2_UNKNOWN, 0, "1",
+                  "output;");
 }
 
 /* Build pre-ACL and ACL tables for both ingress and egress.
@@ -9644,13 +9633,10 @@ build_lswitch_ip_mcast_igmp_mld(struct ovn_igmp_group *igmp_group,
     }
 }
 
-static struct ovs_mutex mcgroup_mutex = OVS_MUTEX_INITIALIZER;
-
 /* Ingress table 25: Destination lookup, unicast handling (priority 50), */
 static void
 build_lswitch_ip_unicast_lookup(struct ovn_port *op,
                                 struct hmap *lflows,
-                                struct hmap *mcgroups,
                                 struct ds *actions,
                                 struct ds *match)
 {
@@ -9689,12 +9675,7 @@ build_lswitch_ip_unicast_lookup(struct ovn_port *op,
                                     ds_cstr(actions),
                                     &op->nbsp->header_);
         } else if (!strcmp(op->nbsp->addresses[i], "unknown")) {
-            if (lsp_enabled) {
-                ovs_mutex_lock(&mcgroup_mutex);
-                ovn_multicast_add(mcgroups, &mc_unknown, op);
-                ovs_mutex_unlock(&mcgroup_mutex);
-                op->od->has_unknown = true;
-            }
+            continue;
         } else if (is_dynamic_lsp_address(op->nbsp->addresses[i])) {
             if (!op->nbsp->dynamic_addresses
                 || !ovs_scan(op->nbsp->dynamic_addresses,
@@ -15188,7 +15169,6 @@ struct lswitch_flow_build_info {
     const struct hmap *lr_ports;
     const struct hmap *port_groups;
     struct hmap *lflows;
-    struct hmap *mcgroups;
     struct hmap *igmp_groups;
     const struct shash *meter_groups;
     const struct hmap *lbs;
@@ -15226,6 +15206,7 @@ build_lswitch_and_lrouter_iterate_by_ls(struct ovn_datapath *od,
                                             lsi->meter_groups);
     build_lswitch_output_port_sec_od(od, lsi->lflows);
     build_lswitch_lb_affinity_default_flows(od, lsi->lflows);
+    build_lswitch_lflows_l2_unknown(od, lsi->lflows);
 }
 
 /* Helper function to combine all lflow generation which is iterated by
@@ -15287,8 +15268,8 @@ build_lswitch_and_lrouter_iterate_by_lsp(struct ovn_port *op,
     build_lswitch_dhcp_options_and_response(op, lsi->lflows,
                                             lsi->meter_groups);
     build_lswitch_external_port(op, lsi->lflows);
-    build_lswitch_ip_unicast_lookup(op, lsi->lflows, lsi->mcgroups,
-                                    &lsi->actions, &lsi->match);
+    build_lswitch_ip_unicast_lookup(op, lsi->lflows, &lsi->actions,
+                                    &lsi->match);
 
     /* Build Logical Router Flows. */
     build_ip_routing_flows_for_router_type_lsp(op, lsi->lr_ports,
@@ -15481,7 +15462,6 @@ build_lswitch_and_lrouter_flows(const struct ovn_datapaths *ls_datapaths,
                                 const struct hmap *lr_ports,
                                 const struct hmap *port_groups,
                                 struct hmap *lflows,
-                                struct hmap *mcgroups,
                                 struct hmap *igmp_groups,
                                 const struct shash *meter_groups,
                                 const struct hmap *lbs,
@@ -15509,7 +15489,6 @@ build_lswitch_and_lrouter_flows(const struct ovn_datapaths *ls_datapaths,
             lsiv[index].ls_ports = ls_ports;
             lsiv[index].lr_ports = lr_ports;
             lsiv[index].port_groups = port_groups;
-            lsiv[index].mcgroups = mcgroups;
             lsiv[index].igmp_groups = igmp_groups;
             lsiv[index].meter_groups = meter_groups;
             lsiv[index].lbs = lbs;
@@ -15544,7 +15523,6 @@ build_lswitch_and_lrouter_flows(const struct ovn_datapaths *ls_datapaths,
             .lr_ports = lr_ports,
             .port_groups = port_groups,
             .lflows = lflows,
-            .mcgroups = mcgroups,
             .igmp_groups = igmp_groups,
             .meter_groups = meter_groups,
             .lbs = lbs,
@@ -15603,7 +15581,6 @@ build_lswitch_and_lrouter_flows(const struct ovn_datapaths *ls_datapaths,
     }
 
     free(svc_check_match);
-    build_lswitch_flows(ls_datapaths, lflows);
 }
 
 static void
@@ -15703,7 +15680,7 @@ void build_lflows(struct ovsdb_idl_txn *ovnsb_txn,
                                     input_data->ls_ports,
                                     input_data->lr_ports,
                                     input_data->port_groups, lflows,
-                                    &mcast_groups, &igmp_groups,
+                                    &igmp_groups,
                                     input_data->meter_groups, input_data->lbs,
                                     input_data->bfd_connections,
                                     input_data->features);
@@ -16605,6 +16582,10 @@ build_mcast_groups(const struct sbrec_igmp_group_table *sbrec_igmp_group_table,
 
             if (!lsp_is_router(op->nbsp)) {
                 ovn_multicast_add(mcast_groups, &mc_flood_l2, op);
+            }
+
+            if (op->has_unknown) {
+                ovn_multicast_add(mcast_groups, &mc_unknown, op);
             }
 
             /* If this port is connected to a multicast router then add it
