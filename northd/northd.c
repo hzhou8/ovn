@@ -5592,6 +5592,8 @@ struct ovn_lflow {
                                   * 'dpg_bitmap'. */
     struct ovn_dp_group *dpg;    /* Link to unique Sb datapath group. */
     const char *where;
+
+    struct uuid sb_uuid;            /* SB DB row uuid, specified by northd. */
 };
 
 static void ovn_lflow_destroy(struct hmap *lflows, struct ovn_lflow *lflow);
@@ -16077,7 +16079,9 @@ void build_lflows(struct ovsdb_idl_txn *ovnsb_txn,
             dp_groups = &lr_dp_groups;
         }
 
-        sbflow = sbrec_logical_flow_insert(ovnsb_txn);
+        lflow->sb_uuid = uuid_random();
+        sbflow = sbrec_logical_flow_insert_persist_uuid(ovnsb_txn,
+                                                        &lflow->sb_uuid);
         if (lflow->od) {
             sbrec_logical_flow_set_logical_datapath(sbflow, lflow->od->sb);
         } else {
@@ -16287,7 +16291,9 @@ bool lflow_handle_northd_ls_changes(struct ovsdb_idl_txn *ovnsb_txn,
 
             /* Sync to SB. */
             const struct sbrec_logical_flow *sbflow;
-            sbflow = sbrec_logical_flow_insert(ovnsb_txn);
+            lflow->sb_uuid = uuid_random();
+            sbflow = sbrec_logical_flow_insert_persist_uuid(ovnsb_txn,
+                                                            &lflow->sb_uuid);
             const char *pipeline = ovn_stage_get_pipeline_name(lflow->stage);
             uint8_t table = ovn_stage_get_table(lflow->stage);
             sbrec_logical_flow_set_logical_datapath(sbflow, lflow->od->sb);
