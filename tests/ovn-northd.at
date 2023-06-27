@@ -9551,9 +9551,23 @@ for i in $(seq 10); do
     check ovn-nbctl --wait=sb sync
     check_recompute_counter 0 0 || break
 
+    # Delete and re-add a LSP for several times continuously, to ensure
+    # frequent operations do not trigger recompute when there are in-flight
+    # transcations.
+    for j in $(seq 5); do
+        # wait for sb but not wait for hv
+        check ovn-nbctl --wait=sb lsp-del lsp${i}-2
+        check ovn-nbctl --wait=sb lsp-add ls$i lsp${i}-2 -- lsp-set-addresses lsp${i}-2 "aa:aa:aa:00:00:02 192.168.0.12"
+
+        # even without waiting for sb
+        check ovn-nbctl lsp-del lsp${i}-2
+        check ovn-nbctl lsp-add ls$i lsp${i}-2 -- lsp-set-addresses lsp${i}-2 "aa:aa:aa:00:00:02 192.168.0.12"
+    done
+    check_recompute_counter 0 0 || break
+
 done
 echo Test failed $fail_count in 10.
-AT_CHECK([test $fail_count -le 3])
+AT_CHECK([test $fail_count -le 0])
 
 OVN_CLEANUP([hv1])
 AT_CLEANUP
