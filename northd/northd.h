@@ -111,12 +111,31 @@ struct tracked_lbs {
     struct hmapx deleted;
 };
 
+/* Tracked logical switches whose load balancers have changed. */
+struct tracked_lswitches_with_changed_lbs {
+    // hzhou: Why need a struct instead of just a hmapx?
+    struct hmapx crupdated;
+    // hzhou: the name crupdated is a little misleading. Is the lswitch
+    // created/updated? Or is the LB changes in the lswitch created/updated? I
+    // think it is neither of the case. The lswitch is updated only, and the
+    // LBs can be created/updated/deleted. I think it can be just lswitches,
+    // but it is even better without the struct, just:
+    // struct hmapx tracked_lswitches_with_changed_lbs;
+};
+
+/* Tracked logical routers whose load balancers have changed. */
+struct tracked_lrouters_with_changed_lbs {
+    struct hmapx crupdated;
+};
+
 /* Track what's changed in the northd engine node.
  * Now only tracks ovn_ports (of vif type) - created, updated
  * and deleted. */
 struct northd_tracked_data {
     struct tracked_ovn_ports trk_ovn_ports;
     struct tracked_lbs trk_lbs;
+    struct tracked_lswitches_with_changed_lbs ls_with_changed_lbs;
+    struct tracked_lrouters_with_changed_lbs lr_with_changed_lbs;
 };
 
 struct northd_data {
