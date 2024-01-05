@@ -4521,6 +4521,31 @@ struct ed_type_pflow_output {
     struct physical_debug debug;
 };
 
+static void
+parse_encap_ips(const struct ovsrec_open_vswitch_table *ovs_table,
+                size_t *n_encap_ips, const char * **encap_ips)
+{
+    const struct ovsrec_open_vswitch *cfg =
+        ovsrec_open_vswitch_table_first(ovs_table);
+    const char *chassis_id = get_ovs_chassis_id(ovs_table);
+    const char *encap_ips_str =
+        get_chassis_external_id_value(&cfg->external_ids, chassis_id,
+                                      "ovn-encap-ip", NULL);
+    struct sset encap_ip_set;
+    sset_init(&encap_ip_set);
+    sset_from_delimited_string(&encap_ip_set, encap_ips_str,  ",");
+
+    /* Sort the ips so that their index is deterministic. */
+    *encap_ips = sset_sort(&encap_ip_set);
+
+    /* Copy the strings so that we can destroy the sset. */
+    for (size_t i = 0; (*encap_ips)[i]; i++) {
+        (*encap_ips)[i] = xstrdup((*encap_ips)[i]);
+    }
+    *n_encap_ips = sset_count(&encap_ip_set);
+    sset_destroy(&encap_ip_set);
+}
+
 static void init_physical_ctx(struct engine_node *node,
                               struct ed_type_runtime_data *rt_data,
                               struct ed_type_non_vif_data *non_vif_data,
@@ -4572,6 +4597,7 @@ static void init_physical_ctx(struct engine_node *node,
         engine_get_input_data("ct_zones", node);
     struct simap *ct_zones = &ct_zones_data->current;
 
+    parse_encap_ips(ovs_table, &p_ctx->n_encap_ips, &p_ctx->encap_ips);
     p_ctx->sbrec_port_binding_by_name = sbrec_port_binding_by_name;
     p_ctx->sbrec_port_binding_by_datapath = sbrec_port_binding_by_datapath;
     p_ctx->port_binding_table = port_binding_table;
@@ -4589,10 +4615,21 @@ static void init_physical_ctx(struct engine_node *node,
     p_ctx->patch_ofports = &non_vif_data->patch_ofports;
     p_ctx->chassis_tunnels = &non_vif_data->chassis_tunnels;
 
+
+
     struct controller_engine_ctx *ctrl_ctx = engine_get_context()->client_ctx;
     p_ctx->if_mgr = ctrl_ctx->if_mgr;
 
     pflow_output_get_debug(node, &p_ctx->debug);
+}
+
+static void
+destroy_physical_ctx(struct physical_ctx *p_ctx)
+{
+    for (size_t i = 0; i < p_ctx->n_encap_ips; i++) {
+        free((char *)(p_ctx->encap_ips[i]));
+    }
+    free(p_ctx->encap_ips);
 }
 
 static void *
@@ -4631,6 +4668,7 @@ en_pflow_output_run(struct engine_node *node, void *data)
     struct physical_ctx p_ctx;
     init_physical_ctx(node, rt_data, non_vif_data, &p_ctx);
     physical_run(&p_ctx, pflow_table);
+    destroy_physical_ctx(&p_ctx);
 
     engine_set_node_state(node, EN_UPDATED);
 }
@@ -4675,6 +4713,7 @@ pflow_output_if_status_mgr_handler(struct engine_node *node,
                 bool removed = sbrec_port_binding_is_deleted(binding);
                 if (!physical_handle_flows_for_lport(binding, removed, &p_ctx,
                                                      &pfo->flow_table)) {
+                    destroy_physical_ctx(&p_ctx);
                     return false;
                 }
             }
@@ -4684,11 +4723,13 @@ pflow_output_if_status_mgr_handler(struct engine_node *node,
             bool removed = sbrec_port_binding_is_deleted(pb);
             if (!physical_handle_flows_for_lport(pb, removed, &p_ctx,
                                                  &pfo->flow_table)) {
+                destroy_physical_ctx(&p_ctx);
                 return false;
             }
         }
         engine_set_node_state(node, EN_UPDATED);
     }
+    destroy_physical_ctx(&p_ctx);
     return true;
 }
 
@@ -4715,11 +4756,13 @@ pflow_output_sb_port_binding_handler(struct engine_node *node,
         bool removed = sbrec_port_binding_is_deleted(pb);
         if (!physical_handle_flows_for_lport(pb, removed, &p_ctx,
                                              &pfo->flow_table)) {
+            destroy_physical_ctx(&p_ctx);
             return false;
         }
     }
 
     engine_set_node_state(node, EN_UPDATED);
+    destroy_physical_ctx(&p_ctx);
     return true;
 }
 
@@ -4739,6 +4782,7 @@ pflow_output_sb_multicast_group_handler(struct engine_node *node, void *data)
     physical_handle_mc_group_changes(&p_ctx, &pfo->flow_table);
 
     engine_set_node_state(node, EN_UPDATED);
+    destroy_physical_ctx(&p_ctx);
     return true;
 }
 
@@ -4771,6 +4815,7 @@ pflow_output_runtime_data_handler(struct engine_node *node, void *data)
         if (tdp->tracked_type != TRACKED_RESOURCE_UPDATED) {
             /* Fall back to full recompute when a local datapath
              * is added or deleted. */
+            destroy_physical_ctx(&p_ctx);
             return false;
         }
 
@@ -4781,12 +4826,14 @@ pflow_output_runtime_data_handler(struct engine_node *node, void *data)
                 lport->tracked_type == TRACKED_RESOURCE_REMOVED ? true: false;
             if (!physical_handle_flows_for_lport(lport->pb, removed, &p_ctx,
                                                  &pfo->flow_table)) {
+                destroy_physical_ctx(&p_ctx);
                 return false;
             }
         }
     }
 
     engine_set_node_state(node, EN_UPDATED);
+    destroy_physical_ctx(&p_ctx);
     return true;
 }
 
@@ -4843,12 +4890,14 @@ pflow_output_activated_ports_handler(struct engine_node *node, void *data)
         if (pb) {
             if (!physical_handle_flows_for_lport(pb, false, &p_ctx,
                                                  &pfo->flow_table)) {
+                destroy_physical_ctx(&p_ctx);
                 return false;
             }
             tag_port_as_activated_in_engine(pp);
         }
     }
     engine_set_node_state(node, EN_UPDATED);
+    destroy_physical_ctx(&p_ctx);
     return true;
 }
 
