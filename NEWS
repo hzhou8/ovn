@@ -38,6 +38,9 @@ Post v24.03.0
     ability to disable "VXLAN mode" to extend available tunnel IDs space for
     datapaths from 4095 to 16711680.  For more details see man ovn-nb(5) for
     mentioned option.
+  - Add "external_ids:ovn-encap-ip-default" config for ovn-controller to
+    determine the default encap IP when there are multiple encap IPs
+    configured.
 
 OVN v24.03.0 - 01 Mar 2024
 --------------------------
