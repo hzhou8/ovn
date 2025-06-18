@@ -12546,7 +12546,7 @@ build_lrouter_nat_flows_for_lb(
         [LROUTER_NAT_LB_FLOW_FORCE_SNAT] = "flags.force_snat_for_lb = 1; ",
     };
 
-    int prio = 110;
+    int prio = 30;
 
     struct ds skip_snat_act = DS_EMPTY_INITIALIZER;
     struct ds force_snat_act = DS_EMPTY_INITIALIZER;
@@ -12571,7 +12571,7 @@ build_lrouter_nat_flows_for_lb(
     ds_put_format(match, "ct.new && !ct.rel && %s && %s.dst == %s",
                   ip_match, ip_match, lb_vip->vip_str);
     if (lb_vip->port_str) {
-        prio = 120;
+        prio = 40;
         ds_put_format(match, " && ct_%s && ct_%s.dst == %s",
                       lb->proto, lb->proto, lb_vip->port_str);
     }

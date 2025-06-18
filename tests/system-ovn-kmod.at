@@ -1737,6 +1737,10 @@ ovs-appctl dpctl/dump-flows -m \
         check_flow_assured "$flow"
 done
 
+dnl There shouldn't be any DP flow with both +est and ct_tuple4. Otherwise HW
+dnl offload may not work.
+AT_CHECK([ovs-appctl dpctl/dump-flows | grep 'ct_tuple4' | grep '+est'], [1], [ignore])
+
 ovs-appctl revalidator/resume
 
 OVS_APP_EXIT_AND_WAIT([ovn-controller])

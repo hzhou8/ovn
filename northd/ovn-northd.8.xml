@@ -3905,7 +3905,7 @@ next;
           For all the configured load balancing rules for a Gateway router or
           Router with gateway port in <code>OVN_Northbound</code> database that
           includes a L4 port <var>PORT</var> of protocol <var>P</var> and IPv4
-          or IPv6 address <var>VIP</var>, a priority-120 flow that matches on
+          or IPv6 address <var>VIP</var>, a priority-40 flow that matches on
           <code>ct.new &amp;&amp; !ct.rel &amp;&amp; ip &amp;&amp; ip.dst ==
           <var>VIP</var> &amp;&amp; <var>P</var> &amp;&amp; P.dst ==
           </code> <code><var>PORT</var></code> with an action of
@@ -3931,7 +3931,7 @@ next;
         <p>
           For all the configured load balancing rules for a router in
           <code>OVN_Northbound</code> database that includes just an IP address
-          <var>VIP</var> to match on, a priority-110 flow that matches on
+          <var>VIP</var> to match on, a priority-30 flow that matches on
           <code>ct.new &amp;&amp; !ct.rel &amp;&amp; ip4 &amp;&amp; ip.dst ==
           <var>VIP</var></code> with an action of
           <code>ct_lb_mark(<var>args</var>)</code>, where <var>args</var> contains
