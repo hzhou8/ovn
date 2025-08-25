@@ -225,6 +225,202 @@ match_set_chassis_flood_outport(struct match *match,
     }
 }
 
+/* Flow-based tunnel helper functions. */
+
+static void
+put_set_tunnel_src(const char *src_ip, struct ofpbuf *ofpacts)
+{
+    if (strchr(src_ip, ':')) {
+        /* IPv6 */
+        struct in6_addr src_ipv6;
+        if (inet_pton(AF_INET6, src_ip, &src_ipv6) == 1) {
+            union mf_value value;
+            memset(&value, 0, sizeof value);
+            memcpy(&value.ipv6, &src_ipv6, sizeof src_ipv6);
+            ofpact_put_set_field(ofpacts, mf_from_id(MFF_TUN_IPV6_SRC),
+                                &value, NULL);
+        }
+    } else {
+        /* IPv4 */
+        struct in_addr src_ipv4;
+        if (inet_pton(AF_INET, src_ip, &src_ipv4) == 1) {
+            put_load(ntohl(src_ipv4.s_addr), MFF_TUN_SRC, 0, 32, ofpacts);
+        }
+    }
+}
+
+static void
+put_set_tunnel_dst(const char *dst_ip, struct ofpbuf *ofpacts)
+{
+    if (strchr(dst_ip, ':')) {
+        /* IPv6 */
+        struct in6_addr dst_ipv6;
+        if (inet_pton(AF_INET6, dst_ip, &dst_ipv6) == 1) {
+            union mf_value value;
+            memset(&value, 0, sizeof value);
+            memcpy(&value.ipv6, &dst_ipv6, sizeof dst_ipv6);
+            ofpact_put_set_field(ofpacts, mf_from_id(MFF_TUN_IPV6_DST),
+                                &value, NULL);
+        }
+    } else {
+        /* IPv4 */
+        struct in_addr dst_ipv4;
+        if (inet_pton(AF_INET, dst_ip, &dst_ipv4) == 1) {
+            put_load(ntohl(dst_ipv4.s_addr), MFF_TUN_DST, 0, 32, ofpacts);
+        }
+    }
+}
+
+/* Flow-based encapsulation that sets tunnel metadata and endpoint IPs. */
+static void
+put_flow_based_encapsulation(enum mf_field_id mff_ovn_geneve,
+                              enum chassis_tunnel_type tunnel_type,
+                              const char *local_ip, const char *remote_ip,
+                              const struct sbrec_datapath_binding *datapath,
+                              uint16_t outport, bool is_ramp_switch,
+                              struct ofpbuf *ofpacts)
+{
+    struct chassis_tunnel temp_tun = {
+        .type = tunnel_type,
+    };
+    put_encapsulation(mff_ovn_geneve, &temp_tun, datapath,
+                     outport, is_ramp_switch, ofpacts);
+
+    /* Set tunnel source and destination IPs (flow-based specific) */
+    put_set_tunnel_src(local_ip, ofpacts);
+    put_set_tunnel_dst(remote_ip, ofpacts);
+}
+
+
+/* Generate flows for flow-based tunnel to a specific chassis. */
+static void
+put_flow_based_remote_port_redirect_overlay(
+    const struct sbrec_port_binding *binding,
+    const enum en_lport_type type,
+    const struct physical_ctx *ctx,
+    uint32_t port_key,
+    struct match *match,
+    struct ofpbuf *ofpacts_p,
+    struct ovn_desired_flow_table *flow_table)
+{
+    if (!ctx->use_flow_based_tunnels || !binding->chassis) {
+        return;
+    }
+
+    /* Skip if this is a local port (no tunneling needed). */
+    if (binding->chassis == ctx->chassis) {
+        return;
+    }
+
+    enum chassis_tunnel_type tunnel_type =
+        select_preferred_tunnel_type(ctx->chassis, binding->chassis);
+    if (tunnel_type == TUNNEL_TYPE_INVALID) {
+        VLOG_DBG("No common tunnel type with chassis %s",
+                 binding->chassis->name);
+        return;
+    }
+
+    const char *tunnel_type_str = (tunnel_type == GENEVE) ? "geneve" : "vxlan";
+    const char *remote_ip = select_port_encap_ip(binding, tunnel_type);
+    if (!remote_ip) {
+        VLOG_DBG("No compatible encap IP for port %s on chassis %s "
+                 "with type %s", binding->logical_port,
+                 binding->chassis->name, tunnel_type_str);
+        return;
+    }
+
+    ofp_port_t flow_port = get_flow_based_tunnel_port(tunnel_type,
+                                                      ctx->flow_tunnels);
+    if (flow_port == 0) {
+        VLOG_DBG("No flow-based tunnel port found for type %s",
+                 tunnel_type_str);
+        return;
+    }
+
+    VLOG_DBG("Using flow-based tunnel: chassis=%s, tunnel_type=%s, "
+             "remote_ip=%s, flow_port=%d", binding->chassis->name,
+             tunnel_type_str, remote_ip, flow_port);
+
+    /* Generate flows for each local encap IP. */
+    for (size_t i = 0; i < ctx->n_encap_ips; i++) {
+        const char *local_encap_ip = ctx->encap_ips[i];
+
+        struct ofpbuf *ofpacts_clone = ofpbuf_clone(ofpacts_p);
+
+        /* Set encap ID for this local IP. */
+        match_set_reg_masked(match, MFF_LOG_ENCAP_ID - MFF_REG0, i << 16,
+                             (uint32_t) 0xFFFF << 16);
+
+        bool is_vtep_port = type == LP_VTEP;
+        if (is_vtep_port) {
+            put_load(ofp_to_u16(OFPP_NONE), MFF_IN_PORT, 0, 16, ofpacts_clone);
+        }
+
+        /* Set flow-based tunnel encapsulation. */
+        put_flow_based_encapsulation(ctx->mff_ovn_geneve, tunnel_type,
+                                      local_encap_ip, remote_ip,
+                                      binding->datapath, port_key,
+                                      is_vtep_port, ofpacts_clone);
+
+        ofpact_put_OUTPUT(ofpacts_clone)->port = flow_port;
+        put_resubmit(OFTABLE_LOCAL_OUTPUT, ofpacts_clone);
+
+        ofctrl_add_flow(flow_table, OFTABLE_REMOTE_OUTPUT, 100,
+                        binding->header_.uuid.parts[0], match,
+                        ofpacts_clone, &binding->header_.uuid);
+
+        ofpbuf_delete(ofpacts_clone);
+    }
+}
+
+static void
+add_tunnel_ingress_flows(const struct chassis_tunnel *tun,
+                         enum mf_field_id mff_ovn_geneve,
+                         struct ovn_desired_flow_table *flow_table,
+                         struct ofpbuf *ofpacts)
+{
+    /* Main ingress flow (priority 100) */
+    struct match match = MATCH_CATCHALL_INITIALIZER;
+    match_set_in_port(&match, tun->ofport);
+
+    ofpbuf_clear(ofpacts);
+    put_decapsulation(mff_ovn_geneve, tun, ofpacts);
+    put_resubmit(OFTABLE_LOCAL_OUTPUT, ofpacts);
+
+    ofctrl_add_flow(flow_table, OFTABLE_PHY_TO_LOG, 100, 0, &match,
+                    ofpacts, hc_uuid);
+
+    /* Set allow rx from tunnel bit */
+    ofpbuf_clear(ofpacts);
+    put_load(1, MFF_LOG_FLAGS, MLF_RX_FROM_TUNNEL_BIT, 1, ofpacts);
+    put_resubmit(OFTABLE_CT_ZONE_LOOKUP, ofpacts);
+
+    /* Add specific flows for E/W ICMPv{4,6} packets if tunnelled packets
+     * do not fit path MTU. */
+
+    /* IPv4 ICMP flow (priority 120) */
+    match_init_catchall(&match);
+    match_set_in_port(&match, tun->ofport);
+    match_set_dl_type(&match, htons(ETH_TYPE_IP));
+    match_set_nw_proto(&match, IPPROTO_ICMP);
+    match_set_icmp_type(&match, 3);
+    match_set_icmp_code(&match, 4);
+
+    ofctrl_add_flow(flow_table, OFTABLE_PHY_TO_LOG, 120, 0, &match,
+                    ofpacts, hc_uuid);
+
+    /* IPv6 ICMP flow (priority 120) */
+    match_init_catchall(&match);
+    match_set_in_port(&match, tun->ofport);
+    match_set_dl_type(&match, htons(ETH_TYPE_IPV6));
+    match_set_nw_proto(&match, IPPROTO_ICMPV6);
+    match_set_icmp_type(&match, 2);
+    match_set_icmp_code(&match, 0);
+
+    ofctrl_add_flow(flow_table, OFTABLE_PHY_TO_LOG, 120, 0, &match,
+                    ofpacts, hc_uuid);
+}
+
 static void
 put_stack(enum mf_field_id field, struct ofpact_stack *stack)
 {
@@ -435,7 +631,14 @@ put_remote_port_redirect_overlay(const struct sbrec_port_binding *binding,
                                  struct ovn_desired_flow_table *flow_table,
                                  bool allow_hairpin)
 {
-    /* Setup encapsulation */
+    if (ctx->use_flow_based_tunnels) {
+        put_flow_based_remote_port_redirect_overlay(binding, type, ctx,
+                                                    port_key, match,
+                                                    ofpacts_p, flow_table);
+        return;
+    }
+
+    /* Setup encapsulation using traditional port-based tunnels. */
     for (size_t i = 0; i < ctx->n_encap_ips; i++) {
         const char *encap_ip = ctx->encap_ips[i];
         struct ofpbuf *ofpacts_clone = ofpbuf_clone(ofpacts_p);
@@ -2516,6 +2719,95 @@ tunnel_to_chassis(enum mf_field_id mff_ovn_geneve,
     ofpact_put_OUTPUT(remote_ofpacts)->port = tun->ofport;
 }
 
+/* Flow-based tunnel version of fanout_to_chassis for multicast/broadcast. */
+static void
+fanout_to_chassis_flow_based(const struct physical_ctx *ctx,
+                              struct sset *remote_chassis,
+                              const struct sbrec_datapath_binding *datapath,
+                              uint16_t outport, bool is_ramp_switch,
+                              struct ofpbuf *remote_ofpacts)
+{
+    VLOG_DBG("fanout_to_chassis_flow_based called with %"PRIuSIZE
+             " remote chassis", sset_count(remote_chassis));
+
+    if (!ctx->flow_tunnels || ovs_list_is_empty(ctx->flow_tunnels)) {
+        VLOG_DBG("fanout_to_chassis_flow_based: Missing or empty "
+                 "flow_tunnels");
+        return;
+    }
+
+    if (!remote_chassis || sset_is_empty(remote_chassis)) {
+        VLOG_DBG("fanout_to_chassis_flow_based: No remote chassis "
+                 "to send to");
+        return;
+    }
+
+    const char *local_encap_ip = NULL;
+    if (ctx->n_encap_ips <= 0) {
+        return;
+    }
+    local_encap_ip = ctx->encap_ips[0];  /* Use first/default local IP */
+
+    const char *chassis_name;
+    enum chassis_tunnel_type prev_type = TUNNEL_TYPE_INVALID;
+
+    SSET_FOR_EACH (chassis_name, remote_chassis) {
+        const struct sbrec_chassis *remote_chassis_rec =
+        chassis_lookup_by_name(ctx->sbrec_chassis_by_name, chassis_name);
+        if (!remote_chassis_rec) {
+            VLOG_DBG("Chassis %s not found in SB", chassis_name);
+            continue;
+        }
+
+        /* Direct tunnel type selection using new utility */
+        enum chassis_tunnel_type tunnel_type =
+            select_preferred_tunnel_type(ctx->chassis, remote_chassis_rec);
+        if (tunnel_type == TUNNEL_TYPE_INVALID) {
+            VLOG_DBG("No common tunnel type with chassis %s", chassis_name);
+            continue;
+        }
+        const char *tunnel_type_str = (tunnel_type == GENEVE) ? "geneve"
+                                                              : "vxlan";
+
+        /* Find the flow-based tunnel port for this type */
+        struct flow_based_tunnel *compatible_tunnel =
+            flow_based_tunnel_find(ctx->flow_tunnels, tunnel_type);
+        if (!compatible_tunnel) {
+            VLOG_DBG("No flow-based tunnel port found for type %s",
+                     tunnel_type_str);
+            continue;
+        }
+
+        /* Get default remote IP using new utility */
+        const char *remote_ip = select_default_encap_ip(remote_chassis_rec,
+                                                        tunnel_type);
+        if (!remote_ip) {
+            VLOG_DBG("No compatible encap IP for chassis %s with type %s",
+                     chassis_name, tunnel_type_str);
+            continue;
+        }
+
+        /* Add encapsulation if tunnel type changed or this is the first
+         * chassis */
+        if (tunnel_type != prev_type) {
+            /* Create a temporary chassis_tunnel structure for encapsulation */
+            struct chassis_tunnel temp_tun = {
+                .chassis_id = CONST_CAST(char *, chassis_name),
+                .ofport = compatible_tunnel->ofport,
+                .type = tunnel_type
+            };
+            put_encapsulation(ctx->mff_ovn_geneve, &temp_tun, datapath,
+                              outport, is_ramp_switch, remote_ofpacts);
+            prev_type = tunnel_type;
+        }
+
+        /* Set tunnel source and destination IPs for flow-based tunnels */
+        put_set_tunnel_src(local_encap_ip, remote_ofpacts);
+        put_set_tunnel_dst(remote_ip, remote_ofpacts);
+        ofpact_put_OUTPUT(remote_ofpacts)->port = compatible_tunnel->ofport;
+    }
+}
+
 /* Encapsulate and send to a set of remote chassis. */
 static void
 fanout_to_chassis(enum mf_field_id mff_ovn_geneve,
@@ -2757,12 +3049,27 @@ consider_mc_group(const struct physical_ctx *ctx,
     if (remote_ports) {
         put_load(mc->tunnel_key, MFF_LOG_OUTPORT, 0, 32, &remote_ctx->ofpacts);
     }
-    fanout_to_chassis(ctx->mff_ovn_geneve, &remote_chassis,
-                      ctx->chassis_tunnels, mc->datapath, mc->tunnel_key,
-                      false, &remote_ctx->ofpacts);
-    fanout_to_chassis(ctx->mff_ovn_geneve, &vtep_chassis,
-                      ctx->chassis_tunnels, mc->datapath, mc->tunnel_key,
-                      true, &remote_ctx->ofpacts);
+    if (ctx->use_flow_based_tunnels) {
+        VLOG_DBG("Using flow-based tunnels for multicast group %s "
+                 "(tunnel_key=%"PRId64") with %"PRIuSIZE" remote chassis",
+                 mc->name, mc->tunnel_key, sset_count(&remote_chassis));
+        fanout_to_chassis_flow_based(ctx, &remote_chassis,
+                                     mc->datapath, mc->tunnel_key,
+                                     false, &remote_ctx->ofpacts);
+        fanout_to_chassis_flow_based(ctx, &vtep_chassis,
+                                     mc->datapath, mc->tunnel_key,
+                                     true, &remote_ctx->ofpacts);
+    } else {
+        VLOG_DBG("Using port-based tunnels for multicast group %s "
+                 "(tunnel_key=%"PRId64") with %"PRIuSIZE" remote chassis",
+                 mc->name, mc->tunnel_key, sset_count(&remote_chassis));
+        fanout_to_chassis(ctx->mff_ovn_geneve, &remote_chassis,
+                          ctx->chassis_tunnels, mc->datapath, mc->tunnel_key,
+                          false, &remote_ctx->ofpacts);
+        fanout_to_chassis(ctx->mff_ovn_geneve, &vtep_chassis,
+                          ctx->chassis_tunnels, mc->datapath, mc->tunnel_key,
+                          true, &remote_ctx->ofpacts);
+    }
 
     remote_ports = remote_ctx->ofpacts.size > 0;
     if (remote_ports) {
@@ -3394,6 +3701,7 @@ physical_run(struct physical_ctx *p_ctx,
         consider_mc_group(p_ctx, mc, flow_table);
     }
 
+
     /* Table 0, priority 100.
      * ======================
      *
@@ -3408,44 +3716,30 @@ physical_run(struct physical_ctx *p_ctx,
      * packets to the local hypervisor. */
     struct chassis_tunnel *tun;
     HMAP_FOR_EACH (tun, hmap_node, p_ctx->chassis_tunnels) {
-        struct match match = MATCH_CATCHALL_INITIALIZER;
-        match_set_in_port(&match, tun->ofport);
+        add_tunnel_ingress_flows(tun, p_ctx->mff_ovn_geneve, flow_table,
+                                &ofpacts);
+    }
 
-        ofpbuf_clear(&ofpacts);
-        put_decapsulation(p_ctx->mff_ovn_geneve, tun, &ofpacts);
+    /* Process packets that arrive from flow-based tunnels. */
+    if (p_ctx->use_flow_based_tunnels && p_ctx->flow_tunnels
+        && !ovs_list_is_empty(p_ctx->flow_tunnels)) {
+        struct flow_based_tunnel *tunnel;
+        LIST_FOR_EACH (tunnel, list_node, p_ctx->flow_tunnels) {
+            /* Flow-based tunnels use the same ingress flow logic as
+             * port-based. Create a temporary chassis_tunnel structure
+             * for compatibility. */
+            struct chassis_tunnel temp_tunnel = {
+                .type = tunnel->type,
+                .ofport = tunnel->ofport,
+                .chassis_id = NULL  /* Not needed for decapsulation */
+            };
 
-        put_resubmit(OFTABLE_LOCAL_OUTPUT, &ofpacts);
-        ofctrl_add_flow(flow_table, OFTABLE_PHY_TO_LOG, 100, 0, &match,
-                        &ofpacts, hc_uuid);
+            VLOG_DBG("Adding flow-based tunnel ingress flow: in_port=%d, "
+                     "type=%d", tunnel->ofport, tunnel->type);
 
-        /* Set allow rx from tunnel bit. */
-        put_load(1, MFF_LOG_FLAGS, MLF_RX_FROM_TUNNEL_BIT, 1, &ofpacts);
-
-        /* Add specif flows for E/W ICMPv{4,6} packets if tunnelled packets
-         * do not fit path MTU.
-         */
-        put_resubmit(OFTABLE_CT_ZONE_LOOKUP, &ofpacts);
-
-        /* IPv4 */
-        match_init_catchall(&match);
-        match_set_in_port(&match, tun->ofport);
-        match_set_dl_type(&match, htons(ETH_TYPE_IP));
-        match_set_nw_proto(&match, IPPROTO_ICMP);
-        match_set_icmp_type(&match, 3);
-        match_set_icmp_code(&match, 4);
-
-        ofctrl_add_flow(flow_table, OFTABLE_PHY_TO_LOG, 120, 0, &match,
-                        &ofpacts, hc_uuid);
-        /* IPv6 */
-        match_init_catchall(&match);
-        match_set_in_port(&match, tun->ofport);
-        match_set_dl_type(&match, htons(ETH_TYPE_IPV6));
-        match_set_nw_proto(&match, IPPROTO_ICMPV6);
-        match_set_icmp_type(&match, 2);
-        match_set_icmp_code(&match, 0);
-
-        ofctrl_add_flow(flow_table, OFTABLE_PHY_TO_LOG, 120, 0, &match,
-                        &ofpacts, hc_uuid);
+            add_tunnel_ingress_flows(&temp_tunnel, p_ctx->mff_ovn_geneve,
+                                    flow_table, &ofpacts);
+        }
     }
 
     /* Add VXLAN specific rules to transform port keys

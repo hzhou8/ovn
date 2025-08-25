@@ -347,6 +347,7 @@ hash_add_in6_addr(uint32_t hash, const struct in6_addr *addr)
 /* Must be a bit-field ordered from most-preferred (higher number) to
  * least-preferred (lower number). */
 enum chassis_tunnel_type {
+    TUNNEL_TYPE_INVALID = 0,  /* No valid tunnel type or no common type */
     GENEVE = 1 << 1,
     VXLAN  = 1 << 0
 };
