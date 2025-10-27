@@ -851,8 +851,13 @@ encaps_cleanup(struct ovsdb_idl_txn *ovs_idl_txn,
         = xmalloc(sizeof *br_int->ports * br_int->n_ports);
     size_t n = 0;
     for (size_t i = 0; i < br_int->n_ports; i++) {
-        if (!smap_get(&br_int->ports[i]->external_ids, OVN_TUNNEL_ID)) {
-            ports[n++] = br_int->ports[i];
+        struct ovsrec_port *port = br_int->ports[i];
+        bool is_ovn_tunnel = smap_get(&port->external_ids, OVN_TUNNEL_ID);
+        bool is_evpn_tunnel = smap_get_bool(&port->external_ids,
+                                            "ovn-evpn-tunnel", false);
+
+        if (!is_ovn_tunnel && !is_evpn_tunnel) {
+            ports[n++] = port;  /* Keep non-tunnel ports */
         }
     }
 
