@@ -18,6 +18,7 @@
 #ifndef ROUTE_EXCHANGE_NETLINK_H
 #define ROUTE_EXCHANGE_NETLINK_H 1
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <linux/rtnetlink.h>
 #include <netinet/in.h>
@@ -45,6 +46,10 @@ struct re_nl_received_route_node {
     struct in6_addr nexthop;
     /* Adding 1 to this to be sure we actually have a terminating '\0' */
     char ifname[IFNAMSIZ + 1];
+    /* EVPN L3 VNI learned from the route's LWT encapsulation.  Valid only if
+     * 'vni_present'. */
+    bool vni_present;
+    uint32_t vni;
 };
 
 int re_nl_create_vrf(const char *ifname, uint32_t table_id);

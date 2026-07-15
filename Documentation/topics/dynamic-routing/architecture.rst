@@ -364,6 +364,25 @@ For each qualifying route, ``ovn-controller`` creates a ``Learned_Route``
 record in the Southbound database containing the datapath, logical port,
 IP prefix, and nexthop.
 
+EVPN L3 VNI (Type-5 Routes)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+An EVPN type-5 (IP prefix) route may be advertised with an L3 VNI that
+differs from the destination logical switch's ``dynamic-routing-vni``.  When
+the routing daemon installs such a route it attaches the L3 VNI to the kernel
+route as lightweight tunnel (LWT) encapsulation metadata (for example
+``ip route add ... encap ip id <vni> ...``, as programmed by FRR for
+symmetric-IRB type-5 routes).  ``ovn-controller`` reads this VNI from the
+route's LWT encapsulation and stores it in the ``Learned_Route`` record's
+``external_ids:vni`` key.
+
+``ovn-northd`` propagates this VNI into the logical router IP routing pipeline
+so that, when a packet matches the learned route, the EVPN tunnel egress
+encapsulates it with the route's VNI instead of the logical switch's
+``dynamic-routing-vni``.  If a learned route carries no VNI (the kernel route
+has no LWT encapsulation), OVN falls back to the logical switch's
+``dynamic-routing-vni``.
+
 Flow Generation by ovn-northd
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -46,6 +46,7 @@
 #include "lib/ovn-sb-idl.h"
 #include "lib/ovn-util.h"
 #include "ovn/actions.h"
+#include "ovn/features.h"
 #include "if-status.h"
 #include "physical.h"
 #include "pinctrl.h"
@@ -84,6 +85,18 @@ static int64_t get_vxlan_port_key(int64_t port_key);
 static struct uuid *hc_uuid = NULL;
 
 #define CHASSIS_MAC_TO_ROUTER_MAC_CONJID        100
+
+/* Register (reg16) used to carry the EVPN L3 VNI of a learned (type-5) route
+ * from the logical router pipeline into the EVPN tunnel egress of the peer
+ * logical switch pipeline.  Must match "evpn_l3_vni" (REG_EVPN_L3_VNI) in
+ * northd.c.  It lives outside the generic logical register range
+ * (reg0..reg9), so it is not zeroed on the router-to-switch transition and
+ * survives to the egress without special handling.  reg16 requires OVS to
+ * support 32 registers (OVS_REG32_SUPPORT); the flows using it are only
+ * installed when that feature is available.  Bit 31 marks the VNI as
+ * valid. */
+#define OVN_EVPN_VNI_LOG_REG 16
+#define OVN_EVPN_VNI_VALID_BIT 31
 
 void
 physical_register_ovs_idl(struct ovsdb_idl *ovs_idl)
@@ -3388,6 +3401,72 @@ evpn_local_ip_map_destroy(struct evpn_local_ip_map *map)
     hmap_destroy(&map->vni_ip6);
 }
 
+/* Adds the pair of EVPN tunnel egress flows (a normal flow at 'base_prio' and
+ * a loopback variant at 'base_prio + 5') for 'binding' to
+ * OFTABLE_REMOTE_VTEP_OUTPUT.  All flows set tun_src/tun_dst from the binding.
+ *
+ * When 'vni_from_reg' is false the tunnel VNI is the binding's own VNI.  When
+ * true, the flows additionally match on the EVPN L3 VNI validity bit and take
+ * the VNI from reg16 instead (used for a learned type-5 route advertised with
+ * a VNI different from the switch's dynamic-routing-vni). */
+static void
+add_evpn_binding_egress_flows(const struct evpn_binding *binding,
+                              ovs_be32 local_ip4,
+                              const struct in6_addr *local_ip6,
+                              bool vni_from_reg, uint16_t base_prio,
+                              struct ofpbuf *ofpacts, struct match *match,
+                              struct ovn_desired_flow_table *flow_table)
+{
+    ofpbuf_clear(ofpacts);
+    match_init_catchall(match);
+    match_outport_dp_and_port_keys(match, binding->dp_key,
+                                   binding->binding_key);
+    if (vni_from_reg) {
+        match_set_reg_masked(match, OVN_EVPN_VNI_LOG_REG,
+                             1u << OVN_EVPN_VNI_VALID_BIT,
+                             1u << OVN_EVPN_VNI_VALID_BIT);
+    }
+
+    if (local_ip4) {
+        put_load_bytes(&local_ip4, sizeof local_ip4, MFF_TUN_SRC, 0, 32,
+                       ofpacts);
+        ovs_be32 ip4 = in6_addr_get_mapped_ipv4(&binding->remote_ip);
+        put_load_bytes(&ip4, sizeof ip4, MFF_TUN_DST, 0, 32, ofpacts);
+    } else {
+        put_load_bytes(local_ip6, sizeof *local_ip6, MFF_TUN_IPV6_SRC,
+                       0, 128, ofpacts);
+        put_load_bytes(&binding->remote_ip, sizeof binding->remote_ip,
+                       MFF_TUN_IPV6_DST, 0, 128, ofpacts);
+    }
+
+    if (vni_from_reg) {
+        put_move(MFF_REG0 + OVN_EVPN_VNI_LOG_REG, 0, MFF_TUN_ID, 0, 24,
+                 ofpacts);
+    } else {
+        put_load(binding->vni, MFF_TUN_ID, 0, 24, ofpacts);
+    }
+
+    size_t ofpacts_size = ofpacts->size;
+    ofpact_put_OUTPUT(ofpacts)->port = binding->tunnel_ofport;
+
+    ofctrl_add_flow(flow_table, OFTABLE_REMOTE_VTEP_OUTPUT, base_prio,
+                    binding->flow_uuid.parts[0],
+                    match, ofpacts, &binding->flow_uuid);
+
+    /* Loopback variant: match on the LOOPBACK flag and set in_port to none,
+     * otherwise the hairpin traffic would be rejected by ovs. */
+    match_set_reg_masked(match, MFF_LOG_FLAGS - MFF_REG0,
+                         MLF_ALLOW_LOOPBACK, MLF_ALLOW_LOOPBACK);
+
+    ofpbuf_truncate(ofpacts, ofpacts_size);
+    put_load(ofp_to_u16(OFPP_NONE), MFF_IN_PORT, 0, 16, ofpacts);
+    ofpact_put_OUTPUT(ofpacts)->port = binding->tunnel_ofport;
+
+    ofctrl_add_flow(flow_table, OFTABLE_REMOTE_VTEP_OUTPUT, base_prio + 5,
+                    binding->flow_uuid.parts[0],
+                    match, ofpacts, &binding->flow_uuid);
+}
+
 static void
 physical_consider_evpn_binding(const struct evpn_binding *binding,
                                const struct evpn_local_ip_map *vni_ip_map,
@@ -3435,46 +3514,28 @@ physical_consider_evpn_binding(const struct evpn_binding *binding,
                     binding->flow_uuid.parts[0],
                     match, ofpacts, &binding->flow_uuid);
 
-    /* Egress flows. */
-    ofpbuf_clear(ofpacts);
-    match_init_catchall(match);
+    /* Egress flows using the binding's own VNI. */
+    add_evpn_binding_egress_flows(binding, local_ip4, local_ip6, false, 50,
+                                  ofpacts, match, flow_table);
 
-    match_outport_dp_and_port_keys(match, binding->dp_key,
-                                   binding->binding_key);
-
-    if (local_ip4) {
-        put_load_bytes(&local_ip4, sizeof local_ip4, MFF_TUN_SRC, 0, 32,
-                       ofpacts);
-        ovs_be32 ip4 = in6_addr_get_mapped_ipv4(&binding->remote_ip);
-        put_load_bytes(&ip4, sizeof ip4, MFF_TUN_DST, 0, 32, ofpacts);
-    } else {
-        put_load_bytes(local_ip6, sizeof *local_ip6, MFF_TUN_IPV6_SRC,
-                       0, 128, ofpacts);
-        put_load_bytes(&binding->remote_ip, sizeof binding->remote_ip,
-                       MFF_TUN_IPV6_DST, 0, 128, ofpacts);
+    /* EVPN L3 VNI override egress flows.
+     *
+     * A learned (type-5) route may need to egress with an L3 VNI that differs
+     * from this binding's VNI (the destination logical switch's
+     * dynamic-routing-vni).  The logical router pipeline stores the desired
+     * VNI in reg16 (REG_EVPN_L3_VNI) with the validity bit set; reg16 survives
+     * the LR->LS transition (it is outside the reg0..reg9 range zeroed there).
+     * The higher-priority flows added below match on that validity bit and
+     * take the VNI from the register; tun_src/tun_dst still come from the
+     * binding (the remote VTEP is the route's nexthop).
+     *
+     * reg16 is only usable when the running OVS supports 32 registers.  When
+     * it does not, northd never sets the register, so we skip these flows
+     * (also avoiding a reg16 reference that ovs-vswitchd would reject). */
+    if (ovs_feature_is_supported(OVS_REG32_SUPPORT)) {
+        add_evpn_binding_egress_flows(binding, local_ip4, local_ip6, true, 60,
+                                      ofpacts, match, flow_table);
     }
-    put_load(binding->vni, MFF_TUN_ID, 0, 24, ofpacts);
-
-    size_t ofpacts_size = ofpacts->size;
-    ofpact_put_OUTPUT(ofpacts)->port = binding->tunnel_ofport;
-
-    ofctrl_add_flow(flow_table, OFTABLE_REMOTE_VTEP_OUTPUT, 50,
-                    binding->flow_uuid.parts[0],
-                    match, ofpacts, &binding->flow_uuid);
-
-    /* Add flow that will match on LOOPBACK flag, in that case set
-     * in_port to none otherwise the hairpin traffic would be rejected
-     * by ovs. */
-    match_set_reg_masked(match, MFF_LOG_FLAGS - MFF_REG0,
-                         MLF_ALLOW_LOOPBACK, MLF_ALLOW_LOOPBACK);
-
-    ofpbuf_truncate(ofpacts, ofpacts_size);
-    put_load(ofp_to_u16(OFPP_NONE), MFF_IN_PORT, 0, 16, ofpacts);
-    ofpact_put_OUTPUT(ofpacts)->port = binding->tunnel_ofport;
-
-    ofctrl_add_flow(flow_table, OFTABLE_REMOTE_VTEP_OUTPUT, 55,
-                    binding->flow_uuid.parts[0],
-                    match, ofpacts, &binding->flow_uuid);
 
     /* Dynamic FDB learn flows. */
     ofpbuf_clear(ofpacts);

@@ -15,6 +15,7 @@
  */
 
 #include <config.h>
+#include <limits.h>
 #include <stdbool.h>
 
 #include "openvswitch/vlog.h"
@@ -199,10 +200,20 @@ parse_route_from_sbrec_route(struct hmap *parsed_routes_out,
         return NULL;
     }
 
+    /* An EVPN (type-5) route may be learned with an L3 VNI that differs from
+     * the local switch's dynamic-routing-vni.  When present, it is stored in
+     * the SB Learned_Route's external_ids:vni.  A valid VNI is at most 24
+     * bits, so UINT_MAX marks a missing (or, an unexpectedly malformed)
+     * value. */
+    unsigned int raw_vni = smap_get_uint(&route->external_ids, "vni",
+                                         UINT_MAX);
+    bool vni_present = raw_vni != UINT_MAX;
+    uint32_t vni = vni_present ? raw_vni : 0;
+
     return parsed_route_add(od, nexthop, &prefix, plen, false, lrp_addr_s,
                             out_port, 0, false, false, false, NULL,
-                            ROUTE_SOURCE_LEARNED, true, &route->header_, NULL,
-                            parsed_routes_out);
+                            ROUTE_SOURCE_LEARNED, vni_present, vni, true,
+                            &route->header_, NULL, parsed_routes_out);
 }
 
 static void

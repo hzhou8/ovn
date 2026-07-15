@@ -16630,6 +16630,52 @@ AT_CLEANUP
 ])
 
 OVN_FOR_EACH_NORTHD_NO_HV([
+AT_SETUP([dynamic-routing - learned route with EVPN L3 VNI])
+AT_KEYWORDS([dynamic-routing])
+ovn_start
+
+check ovn-nbctl lr-add lr0
+check ovn-nbctl --wait=sb set Logical_Router lr0 option:dynamic-routing=true \
+    option:dynamic-routing-redistribute="connected,static"
+check ovn-nbctl --wait=sb lrp-add lr0 lr0-sw0 00:00:00:00:ff:01 10.0.0.1/24
+sw0=$(fetch_column port_binding _uuid logical_port=lr0-sw0)
+datapath=$(fetch_column datapath_binding _uuid external_ids:name=lr0)
+
+# A type-5 route learned with an L3 VNI (external_ids:vni) that differs from
+# the local switch's dynamic-routing-vni.  northd should carry the VNI towards
+# the EVPN tunnel egress via reg16 (REG_EVPN_L3_VNI) with the validity bit set.
+check_uuid ovn-sbctl create Learned_Route \
+    datapath=$datapath                    \
+    logical_port=$sw0                     \
+    ip_prefix=172.16.0.0/24               \
+    nexthop=10.0.0.11                     \
+    external_ids:vni=100
+check ovn-nbctl --wait=sb sync
+check_row_count Learned_Route 1
+ovn-sbctl dump-flows lr0 > lr0flows
+AT_CHECK([grep -w "lr_in_ip_routing" lr0flows | grep 'ip4.dst == 172.16.0.0/24' | ovn_strip_lflows], [0], [dnl
+  table=??(lr_in_ip_routing   ), priority=1838 , match=(reg7 == 0 && ip4.dst == 172.16.0.0/24), action=(ip.ttl--; reg8[[0..15]] = 0; evpn_l3_vni[[0..23]] = 100; evpn_l3_vni[[31]] = 1; reg0 = 10.0.0.11; reg5 = 10.0.0.1; eth.src = 00:00:00:00:ff:01; outport = "lr0-sw0"; flags.loopback = 1; reg9[[9]] = 1; next;)
+])
+
+# A learned route without a VNI must not set the EVPN VNI register (fallback
+# to the destination switch's dynamic-routing-vni at egress).
+check_uuid ovn-sbctl create Learned_Route \
+    datapath=$datapath                    \
+    logical_port=$sw0                     \
+    ip_prefix=172.16.1.0/24               \
+    nexthop=10.0.0.12
+check ovn-nbctl --wait=sb sync
+check_row_count Learned_Route 2
+ovn-sbctl dump-flows lr0 > lr0flows
+AT_CHECK([grep -w "lr_in_ip_routing" lr0flows | grep 'ip4.dst == 172.16.1.0/24' | ovn_strip_lflows], [0], [dnl
+  table=??(lr_in_ip_routing   ), priority=1838 , match=(reg7 == 0 && ip4.dst == 172.16.1.0/24), action=(ip.ttl--; reg8[[0..15]] = 0; reg0 = 10.0.0.12; reg5 = 10.0.0.1; eth.src = 00:00:00:00:ff:01; outport = "lr0-sw0"; flags.loopback = 1; reg9[[9]] = 1; next;)
+])
+
+OVN_CLEANUP_NORTHD
+AT_CLEANUP
+])
+
+OVN_FOR_EACH_NORTHD_NO_HV([
 AT_SETUP([dynamic-routing - route learning ecmp])
 AT_KEYWORDS([dynamic-routing])
 ovn_start

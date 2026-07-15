@@ -20521,6 +20521,24 @@ AT_CHECK([ip route del 10.10.3.1 via 20.0.0.25 vrf vrf-$vni])
 OVS_WAIT_FOR_OUTPUT([ovn-sbctl list Learned_Route | grep ip_prefix | sort], [0], [dnl
 ])
 
+# A route learned with a lightweight-tunnel (LWT) encap ID - as FRR installs
+# for EVPN type-5 routes carrying an L3 VNI - records that VNI in the
+# Learned_Route's external_ids:vni.  A route without an encap ID has no VNI.
+AS_BOX([$(date +%H:%M:%S.%03N) Learned route with EVPN L3 VNI])
+AT_CHECK([ip route add 10.10.5.1 encap ip id 5000 dst 20.0.0.25 \
+    via 20.0.0.25 vrf vrf-$vni proto zebra])
+wait_row_count Learned_Route 1 ip_prefix=10.10.5.1 external_ids:vni=5000
+
+AT_CHECK([ip route add 10.10.6.1 via 20.0.0.25 vrf vrf-$vni proto zebra])
+wait_row_count Learned_Route 1 ip_prefix=10.10.6.1
+# Only the encap route carries a VNI; the plain route does not.
+check_row_count Learned_Route 1 external_ids:vni=5000
+
+AT_CHECK([ip route del 10.10.5.1 encap ip id 5000 dst 20.0.0.25 \
+    via 20.0.0.25 vrf vrf-$vni])
+AT_CHECK([ip route del 10.10.6.1 via 20.0.0.25 vrf vrf-$vni])
+wait_row_count Learned_Route 0
+
 # Disable learning on router
 AS_BOX([$(date +%H:%M:%S.%03N) Disable dynamic-route learning])
 

@@ -135,6 +135,14 @@ ovn_init_symtab(struct shash *symtab)
         free(name);
     }
 
+    /* EVPN L3 VNI register.  Carries the L3 VNI of a learned (type-5) route
+     * from the logical router pipeline to the EVPN tunnel egress in the peer
+     * logical switch pipeline.  Backed by reg16, which lives outside the
+     * generic logical register range (reg0..reg9) so it survives the
+     * router-to-switch transition, and is only used when the running OVS
+     * supports 32 registers (see the OVS_REG32_SUPPORT feature). */
+    expr_symtab_add_field(symtab, "evpn_l3_vni", MFF_REG16, NULL, false);
+
     /* Flags used in logical to physical transformation. */
     expr_symtab_add_field(symtab, "flags", MFF_LOG_FLAGS, NULL, false);
     char flags_str[16];

@@ -18,6 +18,8 @@
 #include <config.h>
 
 #include <errno.h>
+#include <inttypes.h>
+#include <limits.h>
 #include <net/if.h>
 #include <stdbool.h>
 
@@ -104,11 +106,31 @@ route_add_entry(struct hmap *routes,
     hmap_insert(routes, &route_e->hmap_node, hash);
 }
 
+/* Returns true if the VNI stored in 'sb_route' (external_ids:vni) matches the
+ * '(vni_present, vni)' pair learned from the system.  A learned route without
+ * a VNI matches only an SB route without a VNI, so that a route which gains or
+ * loses its VNI is detected as changed. */
+static bool
+learned_route_vni_matches(const struct sbrec_learned_route *sb_route,
+                          bool vni_present, uint32_t vni)
+{
+    /* A valid VNI is at most 24 bits, so UINT_MAX is a safe marker for a
+     * missing (or unparseable) external_ids:vni. */
+    unsigned int existing_vni =
+        smap_get_uint(&sb_route->external_ids, "vni", UINT_MAX);
+
+    if (!vni_present) {
+        return existing_vni == UINT_MAX;
+    }
+    return existing_vni == vni;
+}
+
 static struct route_entry *
 route_lookup(struct hmap *route_map,
              const struct sbrec_datapath_binding *sb_db,
              const struct sbrec_port_binding *logical_port,
-             const char *ip_prefix, const char *nexthop)
+             const char *ip_prefix, const char *nexthop,
+             bool vni_present, uint32_t vni)
 {
     struct route_entry *route_e;
     uint32_t hash;
@@ -128,6 +150,9 @@ route_lookup(struct hmap *route_map,
             continue;
         }
         if (strcmp(route_e->sb_route->nexthop, nexthop)) {
+            continue;
+        }
+        if (!learned_route_vni_matches(route_e->sb_route, vni_present, vni)) {
             continue;
         }
 
@@ -196,7 +221,9 @@ sb_sync_learned_routes(const struct vector *learned_routes,
             }
 
             route_e = route_lookup(&sync_routes, datapath,
-                                   logical_port, ip_prefix, nexthop);
+                                   logical_port, ip_prefix, nexthop,
+                                   learned_route->vni_present,
+                                   learned_route->vni);
             if (route_e) {
                 route_e->stale = false;
             } else {
@@ -209,6 +236,15 @@ sb_sync_learned_routes(const struct vector *learned_routes,
                 sbrec_learned_route_set_logical_port(sb_route, logical_port);
                 sbrec_learned_route_set_ip_prefix(sb_route, ip_prefix);
                 sbrec_learned_route_set_nexthop(sb_route, nexthop);
+                if (learned_route->vni_present) {
+                    struct smap external_ids =
+                        SMAP_INITIALIZER(&external_ids);
+                    smap_add_format(&external_ids, "vni", "%"PRIu32,
+                                    learned_route->vni);
+                    sbrec_learned_route_set_external_ids(sb_route,
+                                                         &external_ids);
+                    smap_destroy(&external_ids);
+                }
 
                 route_add_entry(&sync_routes, sb_route, false);
             }

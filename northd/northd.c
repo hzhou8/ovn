@@ -231,6 +231,20 @@ BUILD_ASSERT_DECL(ACL_OBS_STAGE_MAX < (1 << 2));
 #define REG_POLICY_CHAIN_ID "reg9[16..31]"
 #define REG_ROUTE_TABLE_ID "reg7"
 
+/* Register carrying the EVPN L3 VNI of a learned (type-5) route towards the
+ * EVPN tunnel egress in the peer logical switch pipeline.  This is used when
+ * the route was advertised with an L3 VNI different from the destination
+ * logical switch's dynamic-routing-vni.  It is backed by reg16 (see
+ * "evpn_l3_vni" in lib/logical-fields.c), which lives outside the generic
+ * logical register range (reg0..reg9), so it does not alias the routing
+ * registers (xxreg0/xxreg1) and survives the LR->LS transition without any
+ * special handling.  reg16 is only available when the running OVS supports 32
+ * registers, so these flows are only emitted when all chassis advertise the
+ * OVS_REG32_SUPPORT feature; otherwise OVN falls back to the logical switch's
+ * dynamic-routing-vni.  Bit 31 marks the VNI as valid. */
+#define REG_EVPN_L3_VNI "evpn_l3_vni[0..23]"
+#define REG_EVPN_L3_VNI_VALID "evpn_l3_vni[31]"
+
 /* Registers used for pasing observability information for switches:
  * domain and point ID. */
 #define REG_OBS_POINT_ID_NEW "reg3"
@@ -12353,6 +12367,11 @@ parsed_route_lookup(struct hmap *routes, size_t hash,
             continue;
         }
 
+        if (pr->vni_present != new_pr->vni_present ||
+            pr->vni != new_pr->vni) {
+            continue;
+        }
+
         return pr;
     }
 
@@ -12373,6 +12392,8 @@ parsed_route_init(const struct ovn_datapath *od,
                   bool override_connected,
                   const struct sset *ecmp_selection_fields,
                   enum route_source source,
+                  bool vni_present,
+                  uint32_t vni,
                   bool dynamic_routing_advertise,
                   const struct ovn_port *tracked_port,
                   const struct ovsdb_idl_row *source_hint)
@@ -12384,6 +12405,8 @@ parsed_route_init(const struct ovn_datapath *od,
     new_pr->plen = plen;
     new_pr->nexthop = nexthop;
     new_pr->route_table_id = route_table_id;
+    new_pr->vni_present = vni_present;
+    new_pr->vni = vni;
     new_pr->is_src_route = is_src_route;
     new_pr->od = od;
     new_pr->ecmp_symmetric_reply = ecmp_symmetric_reply;
@@ -12418,8 +12441,8 @@ parsed_route_clone(const struct parsed_route *pr)
         pr->od, nexthop, pr->prefix, pr->plen, pr->is_discard_route,
         pr->lrp_addr_s, pr->out_port, pr->route_table_id, pr->is_src_route,
         pr->ecmp_symmetric_reply, pr->override_connected,
-        &pr->ecmp_selection_fields, pr->source, pr->dynamic_routing_advertise,
-        pr->tracked_port, pr->source_hint);
+        &pr->ecmp_selection_fields, pr->source, pr->vni_present, pr->vni,
+        pr->dynamic_routing_advertise, pr->tracked_port, pr->source_hint);
 
     new_pr->hash = pr->hash;
     return new_pr;
@@ -12481,6 +12504,8 @@ parsed_route_add(const struct ovn_datapath *od,
                  bool override_connected,
                  const struct sset *ecmp_selection_fields,
                  enum route_source source,
+                 bool vni_present,
+                 uint32_t vni,
                  bool dynamic_routing_advertise,
                  const struct ovsdb_idl_row *source_hint,
                  const struct ovn_port *tracked_port,
@@ -12492,7 +12517,8 @@ parsed_route_add(const struct ovn_datapath *od,
                             lrp_addr_s, out_port, route_table_id,
                             is_src_route, ecmp_symmetric_reply,
                             override_connected, ecmp_selection_fields,
-                            source, dynamic_routing_advertise,
+                            source, vni_present, vni,
+                            dynamic_routing_advertise,
                             tracked_port, source_hint);
 
     new_pr->hash = route_hash(new_pr);
@@ -12643,6 +12669,7 @@ parsed_routes_add_static(const struct ovn_datapath *od,
                                                ecmp_symmetric_reply,
                                                override_connected,
                                                &ecmp_selection_fields, source,
+                                               false, 0,
                                                dynamic_routing_advertise,
                                                &route->header_, NULL, routes);
     sset_destroy(&ecmp_selection_fields);
@@ -12662,7 +12689,7 @@ parsed_routes_add_connected(const struct ovn_datapath *od,
         parsed_route_add(od, NULL, &prefix, addr->plen,
                          false, addr->addr_s, op, 0, false, false,
                          false, NULL, ROUTE_SOURCE_CONNECTED,
-                         true, &op->nbrp->header_, NULL, routes);
+                         false, 0, true, &op->nbrp->header_, NULL, routes);
     }
 
     for (size_t i = 0; i < op->lrp_networks.n_ipv6_addrs; i++) {
@@ -12670,7 +12697,7 @@ parsed_routes_add_connected(const struct ovn_datapath *od,
 
         parsed_route_add(od, NULL, &addr->network, addr->plen, false,
                          addr->addr_s, op, 0, false, false, false,
-                         NULL, ROUTE_SOURCE_CONNECTED, true,
+                         NULL, ROUTE_SOURCE_CONNECTED, false, 0, true,
                          &op->nbrp->header_, NULL, routes);
     }
 }
@@ -13088,7 +13115,8 @@ add_route(struct lflow_table *lflows, const struct ovn_datapath *od,
           const struct ovsdb_idl_row *stage_hint, bool is_discard_route,
           enum route_source source, struct lflow_ref *lflow_ref,
           bool is_ipv4_prefix, bool is_ipv4_nexthop,
-          bool override_connected)
+          bool override_connected,
+          bool evpn_vni_present, uint32_t evpn_vni, bool reg32_supported)
 {
     struct ds match = DS_EMPTY_INITIALIZER;
     uint16_t priority = calc_priority(plen, source, override_connected,
@@ -13123,6 +13151,16 @@ add_route(struct lflow_table *lflows, const struct ovn_datapath *od,
         ds_put_cstr(&actions, debug_drop_action());
     } else {
         ds_put_format(&common_actions, REG_ECMP_GROUP_ID" = 0; ");
+        if (evpn_vni_present && reg32_supported) {
+            /* Carry the route's EVPN L3 VNI towards the EVPN tunnel egress so
+             * that it is used (instead of the destination logical switch's
+             * dynamic-routing-vni) when encapsulating this traffic.  This
+             * requires reg16, hence the OVS 32-register capability; without
+             * it we fall back to the switch's dynamic-routing-vni. */
+            ds_put_format(&common_actions,
+                          REG_EVPN_L3_VNI" = %"PRIu32"; "
+                          REG_EVPN_L3_VNI_VALID" = 1; ", evpn_vni);
+        }
         if (gateway) {
             ds_put_format(&common_actions, "%s = ",
                           is_ipv4_nexthop ? REG_NEXT_HOP_IPV4 :
@@ -13168,7 +13206,8 @@ add_route(struct lflow_table *lflows, const struct ovn_datapath *od,
 static void
 build_route_flow(struct lflow_table *lflows, const struct ovn_datapath *od,
                  const struct parsed_route *route,
-                 const struct sset *bfd_ports, struct lflow_ref *lflow_ref)
+                 const struct sset *bfd_ports, struct lflow_ref *lflow_ref,
+                 bool reg32_supported)
 {
     bool is_ipv4_prefix = IN6_IS_ADDR_V4MAPPED(&route->prefix);
     bool is_ipv4_nexthop = route->nexthop
@@ -13182,7 +13221,8 @@ build_route_flow(struct lflow_table *lflows, const struct ovn_datapath *od,
               route->route_table_id, bfd_ports,
               route->source_hint,
               route->is_discard_route, route->source, lflow_ref,
-              is_ipv4_prefix, is_ipv4_nexthop, route->override_connected);
+              is_ipv4_prefix, is_ipv4_nexthop, route->override_connected,
+              route->vni_present, route->vni, reg32_supported);
 
     free(prefix_s);
 }
@@ -15251,7 +15291,7 @@ void
 build_route_data_flows_for_lrouter(
         const struct ovn_datapath *od, struct lflow_table *lflows,
         const struct group_ecmp_datapath *route_node,
-        const struct sset *bfd_ports)
+        const struct sset *bfd_ports, bool reg32_supported)
 {
     struct ecmp_groups_node *group;
     HMAP_FOR_EACH (group, hmap_node, &route_node->ecmp_groups) {
@@ -15274,7 +15314,7 @@ build_route_data_flows_for_lrouter(
     const struct unique_routes_node *ur;
     HMAP_FOR_EACH (ur, hmap_node, &route_node->unique_routes) {
         build_route_flow(lflows, od, ur->route, bfd_ports,
-                         route_node->lflow_ref);
+                         route_node->lflow_ref, reg32_supported);
     }
 }
 
@@ -15282,7 +15322,8 @@ static void
 build_route_flows_for_lrouter(
         struct ovn_datapath *od, struct lflow_table *lflows,
         const struct group_ecmp_route_data *route_data,
-        struct simap *route_tables, const struct sset *bfd_ports)
+        struct simap *route_tables, const struct sset *bfd_ports,
+        bool reg32_supported)
 {
     ovs_assert(od->nbr);
     build_default_route_flows_for_lrouter(od, lflows, route_tables);
@@ -15292,7 +15333,8 @@ build_route_flows_for_lrouter(
     if (!datapath_node) {
         return;
     }
-    build_route_data_flows_for_lrouter(od, lflows, datapath_node, bfd_ports);
+    build_route_data_flows_for_lrouter(od, lflows, datapath_node, bfd_ports,
+                                       reg32_supported);
 }
 
 static void
@@ -18919,7 +18961,8 @@ build_routable_flows_for_router_port(
                               bfd_ports, &router_port->nbrp->header_,
                               false, ROUTE_SOURCE_CONNECTED,
                               lrp->stateful_lflow_ref,
-                              true, is_ipv4_nexthop ? true : false, false);
+                              true, is_ipv4_nexthop ? true : false, false,
+                              false, 0, false);
                 }
             }
         }
@@ -19708,7 +19751,8 @@ build_lswitch_and_lrouter_iterate_by_lr(struct ovn_datapath *od,
                                            od->datapath_lflows);
     build_route_flows_for_lrouter(od, lsi->lflows,
                                   lsi->route_data, lsi->route_tables,
-                                  lsi->bfd_ports);
+                                  lsi->bfd_ports,
+                                  lsi->features->reg32);
     build_mcast_lookup_flows_for_lrouter(od, lsi->lflows, &lsi->match,
                                          od->datapath_lflows);
     build_ingress_policy_flows_for_lrouter(od, lsi->lflows, lsi->lr_ports,
@@ -20404,6 +20448,7 @@ lflow_handle_northd_lr_changes(struct ovsdb_idl_txn *ovnsb_txn,
         .route_data = lflow_input->route_data,
         .route_tables = lflow_input->route_tables,
         .route_policies = lflow_input->route_policies,
+        .features = lflow_input->features,
         .match = DS_EMPTY_INITIALIZER,
         .actions = DS_EMPTY_INITIALIZER,
     };

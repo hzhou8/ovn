@@ -5518,6 +5518,16 @@ tcp.flags = RST;
       This is the nexthop ip we learned from outside of OVN.
     </column>
 
+    <column name="external_ids" key="vni">
+      For routes learned on an EVPN (type-5) enabled datapath, this is the
+      L3 VNI associated with the route, as learned from the route's
+      lightweight tunnel (LWT) encapsulation.  When set,
+      <code>ovn-controller</code> uses this VNI (rather than the logical
+      switch's <code>dynamic-routing-vni</code>) when encapsulating traffic
+      that egresses towards this route's nexthop.  When not set, the local
+      <code>dynamic-routing-vni</code> is used.
+    </column>
+
     <column name="external_ids">
       See <em>External IDs</em> at the beginning of this document.
     </column>

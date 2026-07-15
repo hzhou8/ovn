@@ -248,6 +248,8 @@ handle_route_msg(const struct route_table_msg *msg,
                 .prefix = rd->rta_dst,
                 .plen = rd->rtm_dst_len,
                 .nexthop = nexthop->addr,
+                .vni_present = rd->vni_present,
+                .vni = rd->vni,
             };
             memcpy(rr.ifname, nexthop->ifname, IFNAMSIZ);
             rr.ifname[IFNAMSIZ] = '\0';
