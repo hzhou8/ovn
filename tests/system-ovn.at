@@ -6662,7 +6662,7 @@ AT_CHECK([ovs-appctl dpctl/flush-conntrack])
 NS_CHECK_EXEC([bob1], [ip r d default via 172.16.0.2 dev bob1], [0])
 NS_CHECK_EXEC([bob1], [ip r a default via 172.16.0.3 dev bob1], [0])
 
-NETNS_DAEMONIZE([bob1], [$NC -l -k 8080], [bob1.pid])
+NETNS_DAEMONIZE([bob1], [$NC $NC_LISTEN_OPT -l -k 8080], [bob1.pid])
 NS_CHECK_EXEC([alice1], [(echo "Packet 1"; sleep 1; echo "Packet 2") | $NC 172.16.0.1 8080], [0])
 NS_CHECK_EXEC([alice1], [ping -q -c 3 -i 0.3 -w 2 172.16.0.1 | FORMAT_PING], \
 [0], [dnl
@@ -6680,7 +6680,7 @@ tcp,orig=(src=10.0.0.2,dst=172.16.0.1,sport=<cleared>,dport=<cleared>),reply=(sr
 check ovn-nbctl --policy="src-ip" lr-route-del R1 10.0.0.0/24 20.0.0.3
 check ovn-nbctl --wait=hv sync
 AT_CHECK([ovs-appctl dpctl/flush-conntrack])
-NETNS_DAEMONIZE([bob1], [$NC -l -k 8081], [bob2.pid])
+NETNS_DAEMONIZE([bob1], [$NC $NC_LISTEN_OPT -l -k 8081], [bob2.pid])
 NS_CHECK_EXEC([alice1], [(echo "Packet 1"; sleep 1; echo "Packet 2") | $NC 172.16.0.1 8081], [0])
 NS_CHECK_EXEC([alice1], [ping -q -c 3 -i 0.3 -w 2 172.16.0.1 | FORMAT_PING], \
 [0], [dnl
@@ -6889,7 +6889,7 @@ test $(ovs-ofctl dump-flows br-int | grep -c 'table=OFTABLE_ECMP_NH, n_packets')
 
 AT_CHECK([ovs-appctl dpctl/flush-conntrack])
 
-NETNS_DAEMONIZE([bob1], [$NC -6 -l -k 8080], [bob1.pid])
+NETNS_DAEMONIZE([bob1], [$NC $NC_LISTEN_OPT -6 -l -k 8080], [bob1.pid])
 NS_CHECK_EXEC([alice1], [(echo "Packet 1"; sleep 1; echo "Packet 2") | $NC -6 fd07::1 8080], [0])
 NS_CHECK_EXEC([alice1], [ping -q -c 3 -i 0.3 -w 2 fd07::1 | FORMAT_PING], \
 [0], [dnl
@@ -6907,7 +6907,7 @@ tcp,orig=(src=fd01::2,dst=fd07::1,sport=<cleared>,dport=<cleared>),reply=(src=fd
 check ovn-nbctl --policy="src-ip" lr-route-del R1 fd01::/126 fd02::3
 check ovn-nbctl --wait=hv sync
 AT_CHECK([ovs-appctl dpctl/flush-conntrack])
-NETNS_DAEMONIZE([bob1], [$NC -6 -l -k 8081], [bob2.pid])
+NETNS_DAEMONIZE([bob1], [$NC $NC_LISTEN_OPT -6 -l -k 8081], [bob2.pid])
 NS_CHECK_EXEC([alice1], [(echo "Packet 1"; sleep 1; echo "Packet 2") | $NC -6 fd07::1 8081], [0])
 NS_CHECK_EXEC([alice1], [ping -q -c 3 -i 0.3 -w 2 fd07::1 | FORMAT_PING], \
 [0], [dnl
