@@ -147,7 +147,7 @@ check multinode_nbctl acl-add sw1 from-lport 1002 'ip4 || ip6'  allow-related
 # create LB
 check multinode_nbctl lb-add lb0 10.0.0.1:8080 10.0.0.4:8080 udp
 check multinode_nbctl ls-lb-add sw0 lb0
-M_NS_DAEMONIZE([ovn-chassis-2], [sw0p2], [nc -u -l 8080 >/dev/null 2>&1], [nc.pid])
+M_NS_DAEMONIZE([ovn-chassis-2], [sw0p2], [$NC -u -l 8080 >/dev/null 2>&1], [nc.pid])
 
 m_add_internal_port ovn-gw-1 ovn-ext0 br-ex ext0 172.20.0.1/24
 m_add_internal_port ovn-gw-1 ovn-ext0 br-ex ext1 172.20.1.1/24
@@ -190,7 +190,7 @@ M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -q -c 3 -i 0.3 -w 2 172.20.1.2 |
 
 m_as ovn-chassis-1 ip route change 170.168.0.0/16 mtu 1000 dev eth1
 for i in $(seq 30); do
-M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [sh -c 'dd bs=512 count=2 if=/dev/urandom | nc -u 10.0.0.1 8080'], [ignore], [ignore], [ignore])
+M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [sh -c 'dd bs=512 count=2 if=/dev/urandom | $NC -u 10.0.0.1 8080'], [ignore], [ignore], [ignore])
 done
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route get 10.0.0.1 dev sw0p1 | grep -q 'mtu 942'])
 
@@ -596,7 +596,7 @@ check multinode_nbctl acl-add sw1 from-lport 1002 'ip4 || ip6'  allow-related
 # create LB
 check multinode_nbctl lb-add lb0 10.0.0.1:8080 20.0.0.3:8080 udp
 check multinode_nbctl lr-lb-add lr0 lb0
-M_NS_DAEMONIZE([ovn-chassis-2], [sw1p1], [nc -u -l 8080 >/dev/null 2>&1], [nc.pid])
+M_NS_DAEMONIZE([ovn-chassis-2], [sw1p1], [$NC -u -l 8080 >/dev/null 2>&1], [nc.pid])
 
 m_add_internal_port ovn-gw-1 ovn-ext0 br-ex ext0 172.20.0.1/24
 m_add_internal_port ovn-gw-1 ovn-ext0 br-ex ext1 172.20.1.1/24
@@ -645,7 +645,7 @@ M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add default via 10.0.0.1 dev
 
 m_as ovn-chassis-1 ip route change 170.168.0.0/16 mtu 1000 dev eth1
 for i in $(seq 30); do
-M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [sh -c 'dd bs=512 count=2 if=/dev/urandom | nc -u 10.0.0.1 8080'], [ignore], [ignore], [ignore])
+M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [sh -c 'dd bs=512 count=2 if=/dev/urandom | $NC -u 10.0.0.1 8080'], [ignore], [ignore], [ignore])
 done
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route get 10.0.0.1 dev sw0p1 | grep -q 'mtu 942'])
 
@@ -723,7 +723,7 @@ check multinode_nbctl acl-add sw1 from-lport 1002 'ip4 || ip6'  allow-related
 # create LB
 check multinode_nbctl lb-add lb0 10.0.0.1:8080 20.0.0.3:8080 udp
 check multinode_nbctl lr-lb-add lr0 lb0
-M_NS_DAEMONIZE([ovn-chassis-2], [sw1p1], [nc -u -l 8080 >/dev/null 2>&1], [nc.pid])
+M_NS_DAEMONIZE([ovn-chassis-2], [sw1p1], [$NC -u -l 8080 >/dev/null 2>&1], [nc.pid])
 
 m_add_internal_port ovn-gw-1 ovn-ext0 br-ex ext0 172.20.0.1/24
 m_add_internal_port ovn-gw-1 ovn-ext0 br-ex ext1 172.20.1.1/24
@@ -765,7 +765,7 @@ M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add default via 10.0.0.1 dev
 
 m_as ovn-chassis-1 ip route change 170.168.0.0/16 mtu 1000 dev eth1
 for i in $(seq 30); do
-M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [sh -c 'dd bs=512 count=2 if=/dev/urandom | nc -u 10.0.0.1 8080'], [ignore], [ignore], [ignore])
+M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [sh -c 'dd bs=512 count=2 if=/dev/urandom | $NC -u 10.0.0.1 8080'], [ignore], [ignore], [ignore])
 done
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route get 10.0.0.1 dev sw0p1 | grep -q 'mtu 950'])
 
@@ -839,7 +839,7 @@ check multinode_nbctl acl-add sw1 from-lport 1002 'ip4 || ip6'  allow-related
 
 check multinode_nbctl lb-add lb0 10.0.0.1:8080 10.0.0.4:8080 udp
 check multinode_nbctl ls-lb-add sw0 lb0
-M_NS_DAEMONIZE([ovn-chassis-2], [sw0p2], [nc -u -l 8080 >/dev/null 2>&1], [nc.pid])
+M_NS_DAEMONIZE([ovn-chassis-2], [sw0p2], [$NC -u -l 8080 >/dev/null 2>&1], [nc.pid])
 
 m_wait_for_ports_up
 
@@ -872,7 +872,7 @@ M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add default via 10.0.0.1 dev
 m_as ovn-chassis-1 ip route change 170.168.0.0/16 mtu 1000 dev eth1
 mtu=$((1000 - overhead))
 for i in $(seq 30); do
-M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [sh -c 'dd bs=512 count=2 if=/dev/urandom | nc -u 10.0.0.1 8080'], [ignore], [ignore], [ignore])
+M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [sh -c 'dd bs=512 count=2 if=/dev/urandom | $NC -u 10.0.0.1 8080'], [ignore], [ignore], [ignore])
 done
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route get 10.0.0.1 dev sw0p1 | grep -q "mtu $mtu"])
 
@@ -2584,7 +2584,7 @@ M_NS_CHECK_EXEC([ovn-chassis-1], [external], [ping -q -c 5 -i 0.3 -w 2 10:200::2
 ])
 
 M_NS_CHECK_EXEC([ovn-chassis-1], [mgmt], [ip a a 172.16.100.2/24 dev mgmt])
-M_NS_DAEMONIZE([ovn-chassis-1], [pod10], [nc -e "$(command -v cat)" -v -l -o server.log 10.100.200.10 2324], [pod10.pid])
+M_NS_DAEMONIZE([ovn-chassis-1], [pod10], [$NC -e "$(command -v cat)" -v -l -o server.log 10.100.200.10 2324], [pod10.pid])
 M_START_TCPDUMP([ovn-chassis-1], [-neei pod10-p ip], [pod10])
 M_START_TCPDUMP([ovn-chassis-1], [-neei mgmt-p ip], [mgmt])
 
@@ -2596,7 +2596,7 @@ check test $(m_as ovn-chassis-1 grep -c "skipping output to input port" \
 check test $(m_as ovn-chassis-2 grep -c "skipping output to input port" \
     /var/log/openvswitch/ovs-vswitchd.log) -eq 0
 
-M_NS_CHECK_EXEC([ovn-chassis-1], [mgmt], [sh -c '(echo "Hello"; sleep 3) | nc -s 172.16.100.2 -o client.log 172.16.0.5 5656'], [0], [ignore], [ignore])
+M_NS_CHECK_EXEC([ovn-chassis-1], [mgmt], [sh -c '(echo "Hello"; sleep 3) | $NC -s 172.16.100.2 -o client.log 172.16.0.5 5656'], [0], [ignore], [ignore])
 check m_as ovn-chassis-1 cmp server.log msg.expected
 check m_as ovn-chassis-1 cmp client.log msg.expected
 
@@ -5191,7 +5191,7 @@ for i in {1..2}; do
 done
 
 AT_CHECK([m_as ovn-gw-1 /bin/bash -c 'for i in $(seq 500); \
-                        do echo "" | nc 172.31.0.1 80 2>/dev/null ; \
+                        do echo "" | $NC 172.31.0.1 80 2>/dev/null ; \
                         echo ; done | sort | uniq -c' > reply], [0], [])
 
 # Check that requests are distributed among all backends.

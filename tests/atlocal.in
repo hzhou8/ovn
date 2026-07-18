@@ -135,11 +135,22 @@ find_command()
     fi
 }
 
-# Set HAVE_NC
-find_command nc
+# Set HAVE_NC and select the installed netcat command.
+if command -v ncat > /dev/null 2>&1; then
+    NC=ncat
+elif command -v nc > /dev/null 2>&1; then
+    NC=nc
+else
+    NC=nc
+fi
+if command -v "$NC" > /dev/null 2>&1; then
+    HAVE_NC=yes
+else
+    HAVE_NC=no
+fi
 
 # Determine correct netcat option to quit on stdin EOF
-if nc --version 2>&1 | grep -q nmap.org; then
+if "$NC" --version 2>&1 | grep -q nmap.org; then
     # Nmap netcat
     NC_EOF_OPT="--send-only -w 5"
 else

@@ -107,8 +107,8 @@ check ovn-nbctl lr-lb-add R2 lb0-no-aff
 check ovn-nbctl lr-lb-add R2 lb10-no-aff
 
 # Start webservers in 'foo1', 'bar1'.
-NETNS_DAEMONIZE([foo1], [nc -l -k 192.168.1.2 80], [nc-foo1.pid])
-NETNS_DAEMONIZE([bar1], [nc -l -k 192.168.2.2 80], [nc-bar1.pid])
+NETNS_DAEMONIZE([foo1], [$NC -l -k 192.168.1.2 80], [nc-foo1.pid])
+NETNS_DAEMONIZE([bar1], [$NC -l -k 192.168.2.2 80], [nc-bar1.pid])
 
 # Wait for ovn-controller to catch up.
 check ovn-nbctl --wait=hv sync
@@ -122,7 +122,7 @@ grep 'nat(dst=192.168.2.2:80)'])
 dnl Should work with the virtual IP address through NAT
 OVS_WAIT_FOR_OUTPUT([
     for i in $(seq 1 5); do
-        NS_EXEC([alice1], [nc -z 172.16.1.100 8080])
+        NS_EXEC([alice1], [$NC -z 172.16.1.100 8080])
     done
 
     dnl Each server should have at least one connection.
@@ -140,7 +140,7 @@ check ovn-nbctl --wait=sb set load_balancer lb10 options:affinity_timeout=60
 
 for i in $(seq 1 15); do
     echo Request $i
-    NS_CHECK_EXEC([alice1], [nc -z 172.16.1.100 8080])
+    NS_CHECK_EXEC([alice1], [$NC -z 172.16.1.100 8080])
 done
 
 dnl here we should have just one entry in the ct table
@@ -161,7 +161,7 @@ n2=$(ovs-ofctl dump-flows br-int table=$dnat |awk '/priority=150,ct_state=\+new\
 echo $?
 }
 AT_CHECK([test $(check_affinity_flows) -eq 0])
-NS_CHECK_EXEC([alice1], [nc -z 172.16.1.100 8081])
+NS_CHECK_EXEC([alice1], [$NC -z 172.16.1.100 8081])
 
 # Flush conntrack entries for easier output parsing of next test.
 AT_CHECK([ovs-appctl dpctl/flush-conntrack])
@@ -181,7 +181,7 @@ check ovn-nbctl lr-lb-add R2 lb11-no-aff
 # check we use both backends
 OVS_WAIT_FOR_OUTPUT([
     for i in $(seq 1 5); do
-        NS_EXEC([alice1], [nc -z 172.16.1.101 8080])
+        NS_EXEC([alice1], [$NC -z 172.16.1.101 8080])
         ovs-ofctl del-flows br-int table=OFTABLE_CHK_LB_AFFINITY
     done
 
@@ -191,7 +191,7 @@ OVS_WAIT_FOR_OUTPUT([
 tcp,orig=(src=172.16.1.2,dst=172.16.1.101,sport=<cleared>,dport=<cleared>),reply=(src=192.168.1.2,dst=172.16.1.2,sport=<cleared>,dport=<cleared>),zone=<cleared>,mark=2,protoinfo=(state=<cleared>)
 tcp,orig=(src=172.16.1.2,dst=172.16.1.101,sport=<cleared>,dport=<cleared>),reply=(src=192.168.2.2,dst=172.16.1.2,sport=<cleared>,dport=<cleared>),zone=<cleared>,mark=2,protoinfo=(state=<cleared>)
 ])
-NS_CHECK_EXEC([alice1], [nc -z 172.16.1.101 8081])
+NS_CHECK_EXEC([alice1], [$NC -z 172.16.1.101 8081])
 
 dnl There shouldn't be any DP flow with both +est and ct_tuple4. Otherwise HW
 dnl offload may not work.
@@ -200,7 +200,7 @@ AT_CHECK([ovs-appctl dpctl/dump-flows | grep 'ct_tuple4' | grep '+est'], [1], [i
 # Flush conntrack entries for easier output parsing of next test.
 AT_CHECK([ovs-appctl dpctl/flush-conntrack])
 
-NETNS_DAEMONIZE([bar2], [nc -l -k 192.168.2.3 80], [nc-bar2.pid])
+NETNS_DAEMONIZE([bar2], [$NC -l -k 192.168.2.3 80], [nc-bar2.pid])
 
 check ovn-nbctl lb-add lb2 192.168.2.100:8080 192.168.2.2:80,192.168.2.3:80
 check ovn-nbctl lb-add lb20 192.168.2.120:8080 192.168.2.2:80,192.168.2.3:80
@@ -215,14 +215,14 @@ check ovn-nbctl ls-lb-add foo lb20-no-aff
 
 for i in $(seq 1 15); do
     echo Request $i
-    NS_CHECK_EXEC([foo1], [nc -z 192.168.2.100 8080])
+    NS_CHECK_EXEC([foo1], [$NC -z 192.168.2.100 8080])
 done
 
 AT_CHECK([ovs-appctl dpctl/dump-conntrack | FORMAT_CT(192.168.2.100) |
 sed -e 's/zone=[[0-9]]*/zone=<cleared>/; s/src=192.168.2.[[0-9]]/src=192.168.2.<cleared>/'], [0], [dnl
 tcp,orig=(src=192.168.1.2,dst=192.168.2.100,sport=<cleared>,dport=<cleared>),reply=(src=192.168.2.<cleared>,dst=192.168.1.2,sport=<cleared>,dport=<cleared>),zone=<cleared>,mark=2,protoinfo=(state=<cleared>)
 ])
-NS_CHECK_EXEC([foo1], [nc -z 192.168.2.100 8081])
+NS_CHECK_EXEC([foo1], [$NC -z 192.168.2.100 8081])
 
 # Flush conntrack entries for easier output parsing of next test.
 AT_CHECK([ovs-appctl dpctl/flush-conntrack])
@@ -242,7 +242,7 @@ AT_CHECK([ovs-appctl dpctl/flush-conntrack])
 
 OVS_WAIT_FOR_OUTPUT([
     for i in $(seq 1 5); do
-        NS_EXEC([foo1], [nc -z 192.168.2.101 8080])
+        NS_EXEC([foo1], [$NC -z 192.168.2.101 8080])
         ovs-ofctl del-flows br-int table=OFTABLE_CHK_LB_AFFINITY
     done
 
@@ -252,7 +252,7 @@ OVS_WAIT_FOR_OUTPUT([
 tcp,orig=(src=192.168.1.2,dst=192.168.2.101,sport=<cleared>,dport=<cleared>),reply=(src=192.168.2.2,dst=192.168.1.2,sport=<cleared>,dport=<cleared>),zone=<cleared>,mark=2,protoinfo=(state=<cleared>)
 tcp,orig=(src=192.168.1.2,dst=192.168.2.101,sport=<cleared>,dport=<cleared>),reply=(src=192.168.2.3,dst=192.168.1.2,sport=<cleared>,dport=<cleared>),zone=<cleared>,mark=2,protoinfo=(state=<cleared>)
 ])
-NS_CHECK_EXEC([foo1], [nc -z 192.168.2.101 8081])
+NS_CHECK_EXEC([foo1], [$NC -z 192.168.2.101 8081])
 
 NS_CHECK_EXEC([foo1], [ip neigh add 192.168.1.200 lladdr 00:00:01:01:02:03 dev foo1], [0])
 check ovn-nbctl lb-add lb4 192.168.1.100:8080 192.168.1.2:80
@@ -275,7 +275,7 @@ AT_CHECK([ovs-appctl dpctl/flush-conntrack])
 
 for i in $(seq 1 15); do
     echo Request $i
-    NS_CHECK_EXEC([foo1], [nc -z 192.168.1.100 8080])
+    NS_CHECK_EXEC([foo1], [$NC -z 192.168.1.100 8080])
 done
 
 dnl Each server should have at least one connection.
@@ -285,7 +285,7 @@ tcp,orig=(src=192.168.1.2,dst=192.168.1.100,sport=<cleared>,dport=<cleared>),rep
 tcp,orig=(src=192.168.1.2,dst=192.168.1.2,sport=<cleared>,dport=<cleared>),reply=(src=192.168.1.2,dst=192.168.1.200,sport=<cleared>,dport=<cleared>),zone=<cleared>,protoinfo=(state=<cleared>)
 tcp,orig=(src=192.168.1.200,dst=192.168.1.2,sport=<cleared>,dport=<cleared>),reply=(src=192.168.1.2,dst=192.168.1.200,sport=<cleared>,dport=<cleared>),zone=<cleared>,protoinfo=(state=<cleared>)
 ])
-NS_CHECK_EXEC([foo1], [nc -z 192.168.1.100 8081])
+NS_CHECK_EXEC([foo1], [$NC -z 192.168.1.100 8081])
 
 dnl There shouldn't be any DP flow with both +est and ct_tuple4. Otherwise HW
 dnl offload may not work.
@@ -416,13 +416,13 @@ OVS_WAIT_UNTIL([ovs-ofctl -O OpenFlow13 dump-groups br-int | \
 grep 'nat(dst=\[[fd11::2\]]:80)'])
 
 # Start webservers in 'foo1', 'bar1'.
-NETNS_DAEMONIZE([foo1], [nc -l -k fd11::2 80], [nc-foo1.pid])
-NETNS_DAEMONIZE([bar1], [nc -l -k fd12::2 80], [nc-bar1.pid])
+NETNS_DAEMONIZE([foo1], [$NC -l -k fd11::2 80], [nc-foo1.pid])
+NETNS_DAEMONIZE([bar1], [$NC -l -k fd12::2 80], [nc-bar1.pid])
 
 dnl Should work with the virtual IP address through NAT
 OVS_WAIT_FOR_OUTPUT([
     for i in $(seq 1 5); do
-        NS_EXEC([alice1], [nc -z fd30::1 8080])
+        NS_EXEC([alice1], [$NC -z fd30::1 8080])
     done
 
     dnl Each server should have at least one connection.
@@ -431,7 +431,7 @@ OVS_WAIT_FOR_OUTPUT([
 tcp,orig=(src=fd72::2,dst=fd30::1,sport=<cleared>,dport=<cleared>),reply=(src=fd11::2,dst=fd72::2,sport=<cleared>,dport=<cleared>),zone=<cleared>,mark=2,protoinfo=(state=<cleared>)
 tcp,orig=(src=fd72::2,dst=fd30::1,sport=<cleared>,dport=<cleared>),reply=(src=fd12::2,dst=fd72::2,sport=<cleared>,dport=<cleared>),zone=<cleared>,mark=2,protoinfo=(state=<cleared>)
 ])
-NS_CHECK_EXEC([alice1], [nc -z fd30::1 8081])
+NS_CHECK_EXEC([alice1], [$NC -z fd30::1 8081])
 
 # Flush conntrack entries for easier output parsing of next test.
 AT_CHECK([ovs-appctl dpctl/flush-conntrack])
@@ -441,7 +441,7 @@ check ovn-nbctl --wait=sb set load_balancer lb10 options:affinity_timeout=60
 
 for i in $(seq 1 15); do
     echo Request $i
-    NS_CHECK_EXEC([alice1], [nc -z fd30::1 8080])
+    NS_CHECK_EXEC([alice1], [$NC -z fd30::1 8080])
 done
 
 dnl here we should have just one entry in the ct table
@@ -462,7 +462,7 @@ n2=$(ovs-ofctl dump-flows br-int table=$dnat |awk '/priority=150,ct_state=\+new\
 echo $?
 }
 AT_CHECK([test $(check_affinity_flows) -eq 0])
-NS_CHECK_EXEC([alice1], [nc -z fd30::1 8081])
+NS_CHECK_EXEC([alice1], [$NC -z fd30::1 8081])
 
 # Flush conntrack entries for easier output parsing of next test.
 AT_CHECK([ovs-appctl dpctl/flush-conntrack])
@@ -482,7 +482,7 @@ check ovn-nbctl lr-lb-add R2 lb11-no-aff
 # check we use both backends
 OVS_WAIT_FOR_OUTPUT([
     for i in $(seq 1 5); do
-        NS_EXEC([alice1], [nc -z fd30::2 8080])
+        NS_EXEC([alice1], [$NC -z fd30::2 8080])
         ovs-ofctl del-flows br-int table=OFTABLE_CHK_LB_AFFINITY
     done
 
@@ -492,12 +492,12 @@ OVS_WAIT_FOR_OUTPUT([
 tcp,orig=(src=fd72::2,dst=fd30::2,sport=<cleared>,dport=<cleared>),reply=(src=fd11::2,dst=fd72::2,sport=<cleared>,dport=<cleared>),zone=<cleared>,mark=2,protoinfo=(state=<cleared>)
 tcp,orig=(src=fd72::2,dst=fd30::2,sport=<cleared>,dport=<cleared>),reply=(src=fd12::2,dst=fd72::2,sport=<cleared>,dport=<cleared>),zone=<cleared>,mark=2,protoinfo=(state=<cleared>)
 ])
-NS_CHECK_EXEC([alice1], [nc -z fd30::2 8081])
+NS_CHECK_EXEC([alice1], [$NC -z fd30::2 8081])
 
 # Flush conntrack entries for easier output parsing of next test.
 AT_CHECK([ovs-appctl dpctl/flush-conntrack])
 
-NETNS_DAEMONIZE([bar2], [nc -l -k fd12::3 80], [nc-bar2.pid])
+NETNS_DAEMONIZE([bar2], [$NC -l -k fd12::3 80], [nc-bar2.pid])
 
 check ovn-nbctl lb-add lb2 [[fd12::a]]:8080 [[fd12::2]]:80,[[fd12::3]]:80
 check ovn-nbctl lb-add lb20 [[fd12::2a]]:8080 [[fd12::2]]:80,[[fd12::3]]:80
@@ -512,7 +512,7 @@ check ovn-nbctl ls-lb-add foo lb20-no-aff
 
 for i in $(seq 1 15); do
     echo Request $i
-    NS_CHECK_EXEC([foo1], [nc -z fd12::a 8080])
+    NS_CHECK_EXEC([foo1], [$NC -z fd12::a 8080])
 done
 
 dnl here we should have just one entry in the ct table
@@ -520,7 +520,7 @@ AT_CHECK([ovs-appctl dpctl/dump-conntrack | FORMAT_CT(fd12::a) | grep -v fe80 |
 sed -e 's/zone=[[0-9]]*/zone=<cleared>/; s/src=fd12::[[0-9]]/src=fd12::<cleared>/'], [0], [dnl
 tcp,orig=(src=fd11::2,dst=fd12::a,sport=<cleared>,dport=<cleared>),reply=(src=fd12::<cleared>,dst=fd11::2,sport=<cleared>,dport=<cleared>),zone=<cleared>,mark=2,protoinfo=(state=<cleared>)
 ])
-NS_CHECK_EXEC([foo1], [nc -z fd12::a 8081])
+NS_CHECK_EXEC([foo1], [$NC -z fd12::a 8081])
 
 AT_CHECK([ovs-appctl dpctl/flush-conntrack])
 
@@ -537,7 +537,7 @@ check ovn-nbctl ls-lb-add foo lb30-no-aff
 
 OVS_WAIT_FOR_OUTPUT([
     for i in $(seq 1 5); do
-        NS_EXEC([foo1], [nc -z fd12::b 8080])
+        NS_EXEC([foo1], [$NC -z fd12::b 8080])
         ovs-ofctl del-flows br-int table=OFTABLE_CHK_LB_AFFINITY
     done
 
@@ -546,7 +546,7 @@ OVS_WAIT_FOR_OUTPUT([
 tcp,orig=(src=fd11::2,dst=fd12::b,sport=<cleared>,dport=<cleared>),reply=(src=fd12::2,dst=fd11::2,sport=<cleared>,dport=<cleared>),zone=<cleared>,mark=2,protoinfo=(state=<cleared>)
 tcp,orig=(src=fd11::2,dst=fd12::b,sport=<cleared>,dport=<cleared>),reply=(src=fd12::3,dst=fd11::2,sport=<cleared>,dport=<cleared>),zone=<cleared>,mark=2,protoinfo=(state=<cleared>)
 ])
-NS_CHECK_EXEC([foo1], [nc -z fd12::b 8081])
+NS_CHECK_EXEC([foo1], [$NC -z fd12::b 8081])
 
 NS_CHECK_EXEC([foo1], [ip -6 neigh add fd11::b lladdr 00:00:01:01:02:03 dev foo1], [0])
 check ovn-nbctl --wait=sb lb-add lb4 [[fd11::a]]:8080 [[fd11::2]]:80
@@ -569,7 +569,7 @@ AT_CHECK([ovs-appctl dpctl/flush-conntrack])
 
 OVS_WAIT_FOR_OUTPUT([
     for i in $(seq 1 5); do
-        NS_EXEC([foo1], [nc -z fd11::a 8080])
+        NS_EXEC([foo1], [$NC -z fd11::a 8080])
     done
 
     dnl Each server should have at least one connection.
@@ -579,7 +579,7 @@ tcp,orig=(src=fd11::2,dst=fd11::2,sport=<cleared>,dport=<cleared>),reply=(src=fd
 tcp,orig=(src=fd11::2,dst=fd11::a,sport=<cleared>,dport=<cleared>),reply=(src=fd11::2,dst=fd11::2,sport=<cleared>,dport=<cleared>),zone=<cleared>,mark=2,protoinfo=(state=<cleared>)
 tcp,orig=(src=fd11::b,dst=fd11::2,sport=<cleared>,dport=<cleared>),reply=(src=fd11::2,dst=fd11::b,sport=<cleared>,dport=<cleared>),zone=<cleared>,protoinfo=(state=<cleared>)
 ])
-NS_CHECK_EXEC([foo1], [nc -z fd11::a 8081])
+NS_CHECK_EXEC([foo1], [$NC -z fd11::a 8081])
 
 OVN_CLEANUP_CONTROLLER([hv1])
 
@@ -663,7 +663,7 @@ wait_for_ports_up
 check ovn-nbctl --wait=hv sync
 
 # Create service that listens for TCP and UDP
-NETNS_DAEMONIZE([vm2], [nc -l -k 1235], [nc0.pid])
+NETNS_DAEMONIZE([vm2], [$NC -l -k 1235], [nc0.pid])
 
 test_icmp() {
     # Make sure that a ping works as expected
@@ -687,8 +687,8 @@ icmp,orig=(src=173.0.1.2,dst=172.16.0.102,id=<cleared>,type=8,code=0),reply=(src
 }
 
 test_udp() {
-    NETNS_DAEMONIZE([vm2], [nc -l -u 1234], [nc1.pid])
-    NS_CHECK_EXEC([vm1], [nc -u 30.0.0.1 1234 -p 1222 -z])
+    NETNS_DAEMONIZE([vm2], [$NC -l -u 1234], [nc1.pid])
+    NS_CHECK_EXEC([vm1], [$NC -u 30.0.0.1 1234 -p 1222 -z])
     kill $(cat nc1.pid)
 
     AT_CHECK([ovs-appctl dpctl/dump-conntrack | FORMAT_CT(30.0.0.1) | \
@@ -704,7 +704,7 @@ udp,orig=(src=173.0.1.2,dst=172.16.0.102,sport=<cleared>,dport=<cleared>),reply=
 }
 
 test_tcp() {
-    NS_CHECK_EXEC([vm1], [nc 30.0.0.1 1235 -z])
+    NS_CHECK_EXEC([vm1], [$NC 30.0.0.1 1235 -z])
 
     AT_CHECK([ovs-appctl dpctl/dump-conntrack | FORMAT_CT(30.0.0.1) | \
     sed -e 's/zone=[[0-9]]*/zone=<cleared>/'], [0], [dnl
@@ -931,12 +931,12 @@ printf %8000s > datafile
 printf %32000s > frag_test_srv.expected
 printf %16000s > frag_test_client.expected
 
-NETNS_DAEMONIZE([lsp], [nc -e "$(command -v cat)" -u -v -l 42.42.42.1 2021 -o udp_frag_test_srv.rcvd], [lsp-nc.pid])
+NETNS_DAEMONIZE([lsp], [$NC -e "$(command -v cat)" -u -v -l 42.42.42.1 2021 -o udp_frag_test_srv.rcvd], [lsp-nc.pid])
 
 # Send 2 client requests with the same port so that the 2nd one
 # is categorized as ct.est and not ct.new.
-NS_CHECK_EXEC([lsp], [(cat datafile; sleep 3) | nc -u 88.88.88.88 4040 -p 20000 -o udp_frag_test_c1.recvd], [0], [ignore], [ignore])
-NS_CHECK_EXEC([lsp], [(cat datafile; sleep 3) | nc -u 88.88.88.88 4040 -p 20000 -o udp_frag_test_c2.recvd], [0], [ignore], [ignore])
+NS_CHECK_EXEC([lsp], [(cat datafile; sleep 3) | $NC -u 88.88.88.88 4040 -p 20000 -o udp_frag_test_c1.recvd], [0], [ignore], [ignore])
+NS_CHECK_EXEC([lsp], [(cat datafile; sleep 3) | $NC -u 88.88.88.88 4040 -p 20000 -o udp_frag_test_c2.recvd], [0], [ignore], [ignore])
 
 check cmp frag_test_srv.expected udp_frag_test_srv.rcvd
 check cmp frag_test_client.expected udp_frag_test_c1.recvd
@@ -993,12 +993,12 @@ printf %8000s > datafile
 printf %32000s > frag_test_srv.expected
 printf %16000s > frag_test_client.expected
 
-NETNS_DAEMONIZE([lsp], [nc -e "$(command -v cat)" -u -v -l 4200::1 2021 -o udp_frag_test_srv.rcvd], [lsp-nc.pid])
+NETNS_DAEMONIZE([lsp], [$NC -e "$(command -v cat)" -u -v -l 4200::1 2021 -o udp_frag_test_srv.rcvd], [lsp-nc.pid])
 
 # Send 2 client requests with the same port so that the 2nd one
 # is categorized as ct.est and not ct.new.
-NS_CHECK_EXEC([lsp], [(cat datafile; sleep 3) | nc -6 -u 8800::0088 4040 -p 20000 -o udp_frag_test_c1.recvd], [0], [ignore], [ignore])
-NS_CHECK_EXEC([lsp], [(cat datafile; sleep 3) | nc -6 -u 8800::0088 4040 -p 20000 -o udp_frag_test_c2.recvd], [0], [ignore], [ignore])
+NS_CHECK_EXEC([lsp], [(cat datafile; sleep 3) | $NC -6 -u 8800::0088 4040 -p 20000 -o udp_frag_test_c1.recvd], [0], [ignore], [ignore])
+NS_CHECK_EXEC([lsp], [(cat datafile; sleep 3) | $NC -6 -u 8800::0088 4040 -p 20000 -o udp_frag_test_c2.recvd], [0], [ignore], [ignore])
 
 check cmp frag_test_srv.expected udp_frag_test_srv.rcvd
 check cmp frag_test_client.expected udp_frag_test_c1.recvd
@@ -1536,14 +1536,14 @@ NETNS_START_TCPDUMP([pod], [-vnne "ip or icmp"], [pod])
 echo -e "Hello UDP\nHello UDP" > udp.expected
 echo -e "Hello TCP\nHello TCP" > tcp.expected
 
-NETNS_DAEMONIZE([pod], [nc -e "$(command -v cat)" -v -l -u -o server_udp.log 192.168.100.5 2323], [nc1.pid])
-NETNS_DAEMONIZE([pod], [nc -e "$(command -v cat)" -v -l -o server_tcp.log 192.168.100.5 2324], [nc2.pid])
+NETNS_DAEMONIZE([pod], [$NC -e "$(command -v cat)" -v -l -u -o server_udp.log 192.168.100.5 2323], [nc1.pid])
+NETNS_DAEMONIZE([pod], [$NC -e "$(command -v cat)" -v -l -o server_tcp.log 192.168.100.5 2324], [nc2.pid])
 
-NS_CHECK_EXEC([mgmt], [(echo "Hello UDP"; sleep 3) | nc -u -s 172.16.100.2 -o client_udp.log 172.16.0.5 5656], [0], [ignore], [ignore])
+NS_CHECK_EXEC([mgmt], [(echo "Hello UDP"; sleep 3) | $NC -u -s 172.16.100.2 -o client_udp.log 172.16.0.5 5656], [0], [ignore], [ignore])
 check cmp server_udp.log udp.expected
 check cmp client_udp.log udp.expected
 
-NS_CHECK_EXEC([mgmt], [(echo "Hello TCP"; sleep 3) | nc -s 172.16.100.2 -o client_tcp.log 172.16.0.5 5657], [0], [ignore], [ignore])
+NS_CHECK_EXEC([mgmt], [(echo "Hello TCP"; sleep 3) | $NC -s 172.16.100.2 -o client_tcp.log 172.16.0.5 5657], [0], [ignore], [ignore])
 check cmp server_tcp.log tcp.expected
 check cmp client_tcp.log tcp.expected
 
@@ -1604,7 +1604,7 @@ ADD_NAMESPACES(vm2)
 ADD_VETH(vm2, vm2, br-int, "42.42.42.1/24", "00:00:00:00:00:02", "42.42.42.2")
 
 dnl Start a server on vm1.
-NETNS_DAEMONIZE([vm1], [nc -l -k 41.41.41.1 8080], [vm1.pid])
+NETNS_DAEMONIZE([vm1], [$NC -l -k 41.41.41.1 8080], [vm1.pid])
 
 dnl Wait for ovn-controller to catch up.
 wait_for_ports_up
@@ -1612,7 +1612,7 @@ check ovn-nbctl --wait=hv sync
 
 ovs-appctl revalidator/pause
 on_exit 'ovs-appctl revalidator/resume'
-NS_CHECK_EXEC([vm2], [nc -z 42.42.42.2 8080], 0, [ignore], [ignore])
+NS_CHECK_EXEC([vm2], [$NC -z 42.42.42.2 8080], 0, [ignore], [ignore])
 
 dnl For each DP flow with ct action, make sure a CT entry exists as established
 dnl for the zone the ct action is taken. Otherwise it means HW offload is
