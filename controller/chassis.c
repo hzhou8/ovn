@@ -74,6 +74,8 @@ struct ovs_chassis_cfg {
     bool sample_with_regs;
     /* Does OVS support flushing CT zones using label/mark? */
     bool ct_label_flush;
+    /* Does OVS support 32 registers (reg16..reg31)? */
+    bool reg32;
 };
 
 enum chassis_update_status {
@@ -385,6 +387,7 @@ chassis_parse_ovs_config(const struct ovsrec_open_vswitch_table *ovs_table,
         ovs_feature_is_supported(OVS_SAMPLE_REG_SUPPORT);
     ovs_cfg->ct_label_flush =
         ovs_feature_is_supported(OVS_CT_LABEL_FLUSH_SUPPORT);
+    ovs_cfg->reg32 = ovs_feature_is_supported(OVS_REG32_SUPPORT);
 
     return true;
 }
@@ -424,6 +427,8 @@ chassis_build_other_config(const struct ovs_chassis_cfg *ovs_cfg,
     smap_replace(config, OVN_FEATURE_CT_LABEL_FLUSH,
                  ovs_cfg->ct_label_flush ? "true" :"false");
     smap_replace(config, OVN_FEATURE_CT_STATE_SAVE, "true");
+    smap_replace(config, OVN_FEATURE_REG32,
+                 ovs_cfg->reg32 ? "true" : "false");
 }
 
 /*
@@ -594,6 +599,12 @@ chassis_other_config_changed(const struct ovs_chassis_cfg *ovs_cfg,
 
     if (!smap_get_bool(&chassis_rec->other_config, OVN_FEATURE_CT_STATE_SAVE,
                        false)) {
+        return true;
+    }
+
+    bool chassis_reg32 =
+        smap_get_bool(&chassis_rec->other_config, OVN_FEATURE_REG32, false);
+    if (chassis_reg32 != ovs_cfg->reg32) {
         return true;
     }
 
@@ -779,6 +790,7 @@ update_supported_sset(struct sset *supported)
     sset_add(supported, OVN_FEATURE_CT_NEXT_ZONE);
     sset_add(supported, OVN_FEATURE_CT_LABEL_FLUSH);
     sset_add(supported, OVN_FEATURE_CT_STATE_SAVE);
+    sset_add(supported, OVN_FEATURE_REG32);
 }
 
 static void

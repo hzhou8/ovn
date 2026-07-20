@@ -27,6 +27,7 @@
 #define OVN_FEATURE_CT_NEXT_ZONE "ct-next-zone"
 #define OVN_FEATURE_CT_LABEL_FLUSH "ct-label-flush"
 #define OVN_FEATURE_CT_STATE_SAVE "ct-state-save"
+#define OVN_FEATURE_REG32 "ovn-32-registers"
 
 /* DEPRECATED: The following features can be removed
  * after the next LTS version release. */
@@ -45,6 +46,7 @@ enum ovs_feature_support_bits {
     OVS_OF_GROUP_SUPPORT_BIT,
     OVS_SAMPLE_REG_SUPPORT_BIT,
     OVS_CT_LABEL_FLUSH_BIT,
+    OVS_REG32_SUPPORT_BIT,
 };
 
 enum ovs_feature_value {
@@ -55,6 +57,10 @@ enum ovs_feature_value {
     OVS_OF_GROUP_SUPPORT = (1 << OVS_OF_GROUP_SUPPORT_BIT),
     OVS_SAMPLE_REG_SUPPORT = (1 << OVS_SAMPLE_REG_SUPPORT_BIT),
     OVS_CT_LABEL_FLUSH_SUPPORT = (1 << OVS_CT_LABEL_FLUSH_BIT),
+    /* OVS (and its OpenFlow interface) supports 32 32-bit registers,
+     * i.e. registers reg16..reg31 (xxreg4..xxreg7) are usable.  Older OVS
+     * versions only support 16 registers. */
+    OVS_REG32_SUPPORT = (1 << OVS_REG32_SUPPORT_BIT),
 };
 
 void ovs_feature_support_destroy(void);

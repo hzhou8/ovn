@@ -270,6 +270,73 @@ sample_with_reg_handle_barrier(struct ovs_openflow_feature *feature OVS_UNUSED)
 }
 
 static void
+reg32_send_request(struct ovs_openflow_feature *feature)
+{
+    struct ofputil_bundle_ctrl_msg ctrl = {
+        .bundle_id = 0,
+        .flags     = OFPBF_ORDERED | OFPBF_ATOMIC,
+        .type      = OFPBCT_OPEN_REQUEST,
+    };
+    rconn_send(swconn,
+               ofputil_encode_bundle_ctrl_request(OFP15_VERSION, &ctrl), NULL);
+
+    struct ofputil_flow_mod fm = {
+        .priority = 0,
+        .table_id = 0,
+        .ofpacts = NULL,
+        .ofpacts_len = 0,
+        .command = OFPFC_ADD,
+        .new_cookie = htonll(0),
+        .buffer_id = UINT32_MAX,
+        .out_port = OFPP_ANY,
+        .out_group = OFPG_ANY,
+    };
+
+    /* Match on reg16, which only exists when the running OVS supports 32
+     * registers.  Older OVS versions reject the flow_mod with an error. */
+    struct match match;
+    match_init_catchall(&match);
+    match_set_reg(&match, MFF_REG16 - MFF_REG0, 1);
+    minimatch_init(&fm.match, &match);
+
+    struct ofpbuf *fm_msg = ofputil_encode_flow_mod(&fm, OFPUTIL_P_OF15_OXM);
+
+    struct ofputil_bundle_add_msg bam = {
+        .bundle_id = ctrl.bundle_id,
+        .flags = ctrl.flags,
+        .msg = fm_msg->data,
+    };
+    struct ofpbuf *msg = ofputil_encode_bundle_add(OFP15_VERSION, &bam);
+
+    feature->xid = ((struct ofp_header *) msg->data)->xid;
+    rconn_send(swconn, msg, NULL);
+
+    ctrl.type = OFPBCT_DISCARD_REQUEST;
+    rconn_send(swconn,
+               ofputil_encode_bundle_ctrl_request(OFP15_VERSION, &ctrl), NULL);
+
+    minimatch_destroy(&fm.match);
+    ofpbuf_delete(fm_msg);
+}
+
+static bool
+reg32_handle_response(struct ovs_openflow_feature *feature,
+                      enum ofptype type, const struct ofp_header *oh)
+{
+    if (type != OFPTYPE_ERROR) {
+        log_unexpected_reply(feature, oh);
+    }
+
+    return false;
+}
+
+static bool
+reg32_handle_barrier(struct ovs_openflow_feature *feature OVS_UNUSED)
+{
+    return true;
+}
+
+static void
 ct_label_flush_send_request(struct ovs_openflow_feature *feature)
 {
     /* At the time of this code being written, the highest bits
@@ -345,6 +412,13 @@ static struct ovs_openflow_feature all_openflow_features[] = {
             .handle_response = ct_label_flush_handle_response,
             .handle_barrier = ct_label_flush_handle_barrier,
         },
+        {
+            .value = OVS_REG32_SUPPORT,
+            .name = "reg32",
+            .send_request = reg32_send_request,
+            .handle_response = reg32_handle_response,
+            .handle_barrier = reg32_handle_barrier,
+        },
 };
 
 static bool
@@ -418,6 +492,7 @@ ovs_feature_is_valid(enum ovs_feature_value feature)
     case OVS_OF_GROUP_SUPPORT:
     case OVS_SAMPLE_REG_SUPPORT:
     case OVS_CT_LABEL_FLUSH_SUPPORT:
+    case OVS_REG32_SUPPORT:
         return true;
     default:
         return false;
