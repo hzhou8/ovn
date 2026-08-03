@@ -2417,23 +2417,6 @@ route_need_learn(struct ic_context *ctx,
         return true;
     }
 
-
-    struct sbrec_learned_route *filter = sbrec_learned_route_index_init_row(
-        ctx->sbrec_learned_route_by_datapath);
-    sbrec_learned_route_index_set_datapath(filter, dp);
-    struct sbrec_learned_route *sb_route;
-    SBREC_LEARNED_ROUTE_FOR_EACH_EQUAL (sb_route, filter,
-                                        ctx->sbrec_learned_route_by_datapath) {
-        if (!strcmp(isb_route->ip_prefix, sb_route->ip_prefix)) {
-            sbrec_learned_route_index_destroy_row(filter);
-                VLOG_DBG("Skip learning %s (rtb:%s) route, as we've got"
-                         " dynamic routing learned", isb_route->ip_prefix,
-                         isb_route->route_table);
-            return false;
-        }
-    }
-    sbrec_learned_route_index_destroy_row(filter);
-
     return true;
 }
 
@@ -2901,19 +2884,6 @@ build_ts_routes_to_adv(struct ic_context *ctx,
     if (!dp) {
         return;
     }
-
-    struct sbrec_learned_route *filter = sbrec_learned_route_index_init_row(
-        ctx->sbrec_learned_route_by_datapath);
-    sbrec_learned_route_index_set_datapath(filter, dp);
-    struct sbrec_learned_route *sb_route;
-    SBREC_LEARNED_ROUTE_FOR_EACH_EQUAL (sb_route, filter,
-                                        ctx->sbrec_learned_route_by_datapath) {
-        add_network_to_routes_ad(routes_ad, sb_route->ip_prefix, NULL,
-                                 ts_port_addrs,
-                                 &nb_global->options,
-                                 lr, ts_lrp, route_tag, ts_route_table, true);
-    }
-    sbrec_learned_route_index_destroy_row(filter);
 }
 
 static void
@@ -4106,12 +4076,6 @@ main(int argc, char *argv[])
     ovsdb_idl_track_add_column(ovnsb_idl_loop.idl,
                                &sbrec_service_monitor_col_options);
 
-    ovsdb_idl_add_table(ovnsb_idl_loop.idl, &sbrec_table_learned_route);
-    ovsdb_idl_track_add_column(ovnsb_idl_loop.idl,
-                               &sbrec_learned_route_col_ip_prefix);
-    ovsdb_idl_track_add_column(ovnsb_idl_loop.idl,
-                               &sbrec_learned_route_col_datapath);
-
     ovsdb_idl_add_table(ovnsb_idl_loop.idl, &sbrec_table_address_set);
     ovsdb_idl_track_add_column(ovnsb_idl_loop.idl,
                                &sbrec_address_set_col_name);
@@ -4141,10 +4105,6 @@ main(int argc, char *argv[])
     struct ovsdb_idl_index *sbrec_chassis_by_name
         = ovsdb_idl_index_create1(ovnsb_idl_loop.idl,
                                   &sbrec_chassis_col_name);
-
-    struct ovsdb_idl_index *sbrec_learned_route_by_datapath
-        = ovsdb_idl_index_create1(ovnsb_idl_loop.idl,
-                                  &sbrec_learned_route_col_datapath);
 
     struct ovsdb_idl_index *sbrec_service_monitor_by_remote_type
         = ovsdb_idl_index_create1(ovnsb_idl_loop.idl,
@@ -4351,8 +4311,6 @@ main(int argc, char *argv[])
                 .sbrec_datapath_binding_by_nb_uuid =
                     sbrec_datapath_binding_by_nb_uuid,
                 .sbrec_chassis_by_name = sbrec_chassis_by_name,
-                .sbrec_learned_route_by_datapath =
-                  sbrec_learned_route_by_datapath,
                 .sbrec_service_monitor_by_remote_type =
                     sbrec_service_monitor_by_remote_type,
                 .sbrec_service_monitor_by_ic_learned =

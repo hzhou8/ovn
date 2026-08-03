@@ -45,7 +45,6 @@
 #include "en-ecmp-nexthop.h"
 #include "en-acl-ids.h"
 #include "en-advertised-route-sync.h"
-#include "en-learned-route-sync.h"
 #include "en-group-ecmp-route.h"
 #include "en-datapath-logical-router.h"
 #include "en-datapath-logical-switch.h"
@@ -121,7 +120,6 @@ static unixctl_cb_func chassis_features_list;
     SB_NODE(ecmp_nexthop) \
     SB_NODE(acl_id) \
     SB_NODE(advertised_route) \
-    SB_NODE(learned_route) \
     SB_NODE(advertised_mac_binding)
 
 enum sb_engine_node {
@@ -186,7 +184,6 @@ static ENGINE_NODE(multicast_igmp, SB_WRITE);
 static ENGINE_NODE(acl_id, SB_WRITE);
 static ENGINE_NODE(advertised_route_sync, SB_WRITE);
 static ENGINE_NODE(advertised_mac_binding_sync, SB_WRITE);
-static ENGINE_NODE(learned_route_sync, CLEAR_TRACKED_DATA, SB_WRITE);
 static ENGINE_NODE(dynamic_routes);
 static ENGINE_NODE(group_ecmp_route, CLEAR_TRACKED_DATA);
 static ENGINE_NODE(datapath_logical_router, CLEAR_TRACKED_DATA);
@@ -374,15 +371,8 @@ void inc_proc_northd_init(struct ovsdb_idl_loop *nb,
     engine_add_input(&en_advertised_mac_binding_sync, &en_lr_nat,
                      engine_noop_handler);
 
-    engine_add_input(&en_learned_route_sync, &en_sb_learned_route,
-                     learned_route_sync_sb_learned_route_change_handler);
-    engine_add_input(&en_learned_route_sync, &en_northd,
-                     learned_route_sync_northd_change_handler);
-
     engine_add_input(&en_group_ecmp_route, &en_routes,
                      group_ecmp_route_routes_change_handler);
-    engine_add_input(&en_group_ecmp_route, &en_learned_route_sync,
-                     group_ecmp_route_learned_route_change_handler);
 
     engine_add_input(&en_sync_meters, &en_nb_acl, sync_meters_nb_acl_handler);
     engine_add_input(&en_sync_meters, &en_nb_meter, NULL);

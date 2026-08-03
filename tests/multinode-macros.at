@@ -370,6 +370,32 @@ m_wait_row_count() {
       m_central_as ovn-${db}ctl list $table])
 }
 
+# m_count_learned_routes HV [CONDITION...]
+m_count_learned_routes() {
+    local hv=$1; shift
+    local out=$(m_as $hv ovn-appctl -t ovn-controller route/learned-list 2>/dev/null || true)
+    local cond
+    for cond in "$@"; do
+        out=$(echo "$out" | grep "$cond" || true)
+    done
+    if test -z "$out"; then
+        echo 0
+    else
+        echo "$out" | wc -l
+    fi
+}
+
+# m_wait_learned_route_count HV COUNT [CONDITION...]
+m_wait_learned_route_count() {
+    local hv=$1; shift
+    local count=$1; shift
+    local a=$1 b=$2 c=$3 d=$4 e=$5
+    echo "Waiting until $count learned routes on $hv${1+ with $*}..."
+    OVS_WAIT_UNTIL([test $count = $(m_count_learned_routes $hv $a $b $c $d $e)],[
+      echo "learned routes on $hv: $(m_count_learned_routes $hv $a $b $c $d $e) rows match instead of expected $count:"
+      m_as $hv ovn-appctl -t ovn-controller route/learned-list])
+}
+
 # m_wait_column EXPECTED [DATABASE:]TABLE [COLUMN [CONDITION...]]
 #
 # Wait until all of the values of COLUMN in the rows of TABLE (that

@@ -150,11 +150,8 @@ OVN To-do List
     routes until we are sure to have loaded all necessary Advertised_Routes
     this could be changed.
 
-  * Improve handling of the Learned_Route table in ovn-controller conditional
-    monitoring; once a new local datapath is added we need to wait for
-    monitoring conditions to update before we actually try to learn routes.
-    Otherwise we could try to add duplicated Learned_Routes and the ovnsb
-    commit would fail.
+  * Learned routes are chassis-local; inspect them with
+    ``ovn-appctl -t ovn-controller route/learned-list``.
 
   * Add support for EVPN L3, that involves MAC Binding learning and
     advertisement.

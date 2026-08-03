@@ -4376,7 +4376,7 @@ AT_CLEANUP
 ])
 
 OVN_FOR_EACH_NORTHD([
-AT_SETUP([ovn-ic -- Check ovn-ic adv and learn from SB Learned Route])
+AT_SETUP([ovn-ic -- Check ovn-ic learn from IC-SB routes])
 
 ovn_init_ic_db
 
@@ -4421,59 +4421,43 @@ OVS_WAIT_FOR_OUTPUT([ovn_as az1 ovn-nbctl lr-route-list lr11 | grep 192.168 |
 192.168.0.0/24 169.254.101.2
 ])
 
-ovn_as az2
-check ovn-nbctl --wait=sb set Logical_Router lr12 option:dynamic-routing=true \
-    option:dynamic-routing-redistribute="connected,static"
-check ovn_as az2 ovn-nbctl --wait=sb lrp-add lr12 lr12-dr1 00:00:00:00:ff:01 10.0.0.1/24
-dr1=$(fetch_column port_binding _uuid logical_port=lr12-dr1)
-datapath=$(fetch_column datapath_binding _uuid external_ids:name=lr12)
+# Create a fake availability zone to advertise routes from.  A route owned
+# by a running AZ would be reaped by that AZ's own ovn-ic, which only keeps
+# the routes it advertises itself.
+check_uuid ovn-ic-sbctl create Availability_Zone name=fake_az
+fake_az_uuid=$(fetch_column ic-sb:availability-zone _uuid name="fake_az")
+check_uuid ovn-ic-sbctl create Gateway name=fake_az_gw \
+    availability_zone=$fake_az_uuid \
+    encap=@encap -- --id=@encap create encap type=geneve ip="192.168.0.2"
 
-check_uuid ovn-sbctl create Learned_Route \
-    datapath=$datapath                    \
-    logical_port=$dr1                     \
-    ip_prefix=192.168.1.0/24              \
-    nexthop=10.0.0.20
+check_uuid ovn-ic-sbctl create Route availability_zone=$fake_az_uuid \
+    ip_prefix=192.168.1.0/24 nexthop=169.254.101.2 \
+    origin=connected-dynamic transit_switch=ts11
 
-# Check Learned_Route adv in ovn-ic
+# Check IC-SB route is learned on az1.
 OVS_WAIT_FOR_OUTPUT([ovn_as az1 ovn-nbctl lr-route-list lr11 | grep 192.168 |
              grep learned | awk '{print $1, $2}' | sort ], [0], [dnl
 192.168.0.0/24 169.254.101.2
 192.168.1.0/24 169.254.101.2
 ])
 
-ovn_as az2
-learned=$(fetch_column Learned_Route _uuid ip_prefix=192.168.1.0/24)
-check ovn-sbctl destroy Learned_Route $learned
+route=$(fetch_column ic-sb:Route _uuid ip_prefix=192.168.1.0/24)
+check ovn-ic-sbctl destroy Route $route
 
-# Check Learned_Route removed is not adv and learned.
+# Check removed IC-SB route is not learned on az1.
 OVS_WAIT_FOR_OUTPUT([ovn_as az1 ovn-nbctl lr-route-list lr11 | grep 192.168 |
              grep learned | awk '{print $1, $2}' | sort ], [0], [dnl
 192.168.0.0/24 169.254.101.2
 ])
 
 
-# Duplicate routes, SB learn route by two paths.
-ovn_as az2
-check_uuid ovn-sbctl create Learned_Route \
-               datapath=$datapath         \
-               logical_port=$dr1          \
-               ip_prefix=192.168.1.0/24   \
-               nexthop=10.0.0.20
-
-check ovn-nbctl --wait=sb lrp-add lr12 lr12-dr2 00:00:00:00:ff:02 169.254.254.1/24
-dr2=$(fetch_column port_binding _uuid logical_port=lr12-dr2)
-
-check_uuid ovn-sbctl create Learned_Route \
-    datapath=$datapath                    \
-    logical_port=$dr2                     \
-    ip_prefix=192.168.1.0/24              \
-    nexthop=169.254.254.3
-
-check_uuid ovn-sbctl create Learned_Route \
-    datapath=$datapath                    \
-    logical_port=$dr2                     \
-    ip_prefix=192.168.2.0/24              \
-    nexthop=169.254.254.3
+# Advertise multiple IC-SB routes.
+check_uuid ovn-ic-sbctl create Route availability_zone=$fake_az_uuid \
+    ip_prefix=192.168.1.0/24 nexthop=169.254.101.2 \
+    origin=connected-dynamic transit_switch=ts11
+check_uuid ovn-ic-sbctl create Route availability_zone=$fake_az_uuid \
+    ip_prefix=192.168.2.0/24 nexthop=169.254.101.2 \
+    origin=connected-dynamic transit_switch=ts11
 
 OVS_WAIT_FOR_OUTPUT([ovn_as az1 ovn-nbctl lr-route-list lr11 | grep 192.168 |
              grep learned | awk '{print $1, $2}' | sort ], [0], [dnl
@@ -4482,27 +4466,14 @@ OVS_WAIT_FOR_OUTPUT([ovn_as az1 ovn-nbctl lr-route-list lr11 | grep 192.168 |
 192.168.2.0/24 169.254.101.2
 ])
 
-# Insert the same route Learned Route in the lr11 and don't learn by ovn-ic.
+# Add the same prefix as a local static route on lr11 and don't learn from IC.
 ovn_as az1
-check ovn-nbctl --wait=sb set Logical_Router lr11 option:dynamic-routing=true \
-    option:dynamic-routing-redistribute="connected,static"
-datapath_lr11=$(fetch_column datapath_binding _uuid external_ids:name=lr11)
-check ovn-nbctl --wait=sb lrp-add lr11 lr11-dr1 00:00:00:00:ff:03 169.254.254.2/24
-sw1_dr1=$(fetch_column port_binding _uuid logical_port=lr11-dr1)
-check_uuid ovn-sbctl create Learned_Route \
-    datapath=$datapath_lr11               \
-    logical_port=$sw1_dr1                 \
-    ip_prefix=192.168.1.0/24              \
-    nexthop=169.254.254.3
+check ovn-nbctl --wait=sb lr-route-add lr11 192.168.1.0/24 169.254.254.3
 
 OVS_WAIT_FOR_OUTPUT([ovn_as az1 ovn-nbctl lr-route-list lr11 | grep 192.168 |
              grep learned | awk '{print $1, $2}' | sort ], [0], [dnl
 192.168.0.0/24 169.254.101.2
 192.168.2.0/24 169.254.101.2
-])
-
-OVS_WAIT_FOR_OUTPUT([ovn_as az2 ovn-nbctl lr-route-list lr12 | grep 192.168 |
-             grep learned | awk '{print $1, $2}' | sort ], [0], [dnl
 ])
 
 OVN_CLEANUP_IC([az1], [az2])
@@ -5710,7 +5681,7 @@ AT_CLEANUP
 ])
 
 OVN_FOR_EACH_NORTHD([
-AT_SETUP([ovn-ic -- Check ovn-ic adv and learn from SB Learned Route - hub and spoke mode])
+AT_SETUP([ovn-ic -- Check ovn-ic learn from IC-SB routes - hub and spoke mode])
 
 ovn_init_ic_db
 
@@ -5759,18 +5730,23 @@ ovn_as az2
 check ovn-nbctl --wait=sb set Logical_Router lr12 option:dynamic-routing=true \
     option:dynamic-routing-redistribute="connected,static"
 check ovn_as az2 ovn-nbctl --wait=sb lrp-add lr12 lr12-dr1 00:00:00:00:ff:01 10.0.0.1/24
-dr1=$(fetch_column port_binding _uuid logical_port=lr12-dr1)
-datapath=$(fetch_column datapath_binding _uuid external_ids:name=lr12)
 
-check_uuid ovn-sbctl create Learned_Route \
-    datapath=$datapath                    \
-    logical_port=$dr1                     \
-    ip_prefix=192.168.1.0/24              \
-    nexthop=10.0.0.20
+# Advertise 192.168.1.0/24 into IC from a fake availability zone.  A route
+# owned by a running AZ would be reaped by that AZ's own ovn-ic, which only
+# keeps the routes it advertises itself.
+check_uuid ovn-ic-sbctl create Availability_Zone name=fake_az
+fake_az_uuid=$(fetch_column ic-sb:availability-zone _uuid name="fake_az")
+check_uuid ovn-ic-sbctl create Gateway name=fake_az_gw \
+    availability_zone=$fake_az_uuid \
+    encap=@encap -- --id=@encap create encap type=geneve ip="192.168.0.2"
+
+check_uuid ovn-ic-sbctl create Route availability_zone=$fake_az_uuid \
+    ip_prefix=192.168.1.0/24 nexthop=169.254.101.2 \
+    origin=connected-dynamic transit_switch=ts11
 
 wait_row_count ic-sb:Route 1 ip_prefix=192.168.1.0/24 origin=connected-dynamic
 
-# Check Learned_Route adv in ovn-ic
+# Check IC-SB route is learned on az1.
 OVS_WAIT_FOR_OUTPUT([ovn_as az1 ovn-nbctl lr-route-list lr11 |
              grep learned | awk '{print $1, $2}' | sort ], [0], [dnl
 10.0.0.0/24 169.254.101.2
@@ -5791,8 +5767,8 @@ ovn_as az1
 check ovn-nbctl --wait=sb set Logical_Router lr11 \
     option:dynamic-routing-redistribute="connected,static,hub-spoke"
 # Advertise just 10.0.0.0/24, 192.168.0.0/24 and 192.168.1.0/24 routes
-# Route 192.168.1.0/24 is learned by DR from other logical routes (lr12)
-# And lr12 Advertised it in ovn-ic. Hub-spoke option enable re-routing in lr11
+# Route 192.168.1.0/24 is learned by IC from lr12 and hub-spoke enables
+# re-advertising it from lr11.
 check_row_count Advertised_Route 1 ip_prefix=192.168.0.0/24
 check_row_count Advertised_Route 1 ip_prefix=10.0.0.0/24
 check_row_count Advertised_Route 1 ip_prefix=192.168.1.0/24

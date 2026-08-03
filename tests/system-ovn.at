@@ -15685,19 +15685,18 @@ check ovn-nbctl set Logical_Router_Port internet-phys \
     options:dynamic-routing-maintain-vrf=false
 
 # Now we test route learning.
-check_row_count Learned_Route 0
+check_learned_route_count 0
 check ip route add 233.252.0.0/24 via 192.168.10.10 dev lo onlink vrf ovnvrf1337 proto zebra
 check ip route add 233.253.0.0/24 via 192.168.10.10 dev lo onlink vrf ovnvrf1337
 check ovn-nbctl --wait=hv sync
-check_row_count Learned_Route 1
-lp=$(fetch_column port_binding _uuid logical_port=internet-phys)
-check_row_count Learned_Route 1 logical_port=$lp ip_prefix=233.252.0.0/24 nexthop=192.168.10.10
+check_learned_route_count 1
+check_learned_route_count 1 logical_port=internet-phys ip_prefix=233.252.0.0/24 nexthop=192.168.10.10
 
 # If we remove the route it is also gone.
 check ip route del 233.252.0.0/24 via 192.168.10.10 dev lo onlink vrf ovnvrf1337 proto zebra
 check ip route del 233.253.0.0/24 via 192.168.10.10 dev lo onlink vrf ovnvrf1337
 check ovn-nbctl --wait=hv sync
-check_row_count Learned_Route 0
+check_learned_route_count 0
 
 # By setting a learning interface filter will prevent us from learning the
 # route again. The Port referenced by the name does not even exist.
@@ -15705,14 +15704,14 @@ check ovn-nbctl --wait=hv set Logical_Router_Port internet-phys \
       options:dynamic-routing-port-name=thisportdoesnotexist
 check ip route add 233.252.0.0/24 via 192.168.10.10 dev lo onlink vrf ovnvrf1337 proto zebra
 check ovn-nbctl --wait=hv sync
-check_row_count Learned_Route 0
+check_learned_route_count 0
 
 # Setting the local ovsdb to map this port to "lo" will make route learning
 # work again.
 check ovs-vsctl set Open_vSwitch . \
     external-ids:dynamic-routing-port-mapping="thisisirrelevant=andjustfortesting,thisportdoesnotexist=lo"
 check ovn-nbctl --wait=hv sync
-check_row_count Learned_Route 1
+check_learned_route_count 1
 
 # Now we try the interface filter with an existing port.
 check ovn-nbctl lsp-add phys mylearninglsp
@@ -15727,7 +15726,7 @@ check ovn-nbctl --wait=hv set Logical_Router_Port internet-phys \
 check ip route add 233.253.0.0/24 via 192.168.20.20 dev hv1-mll onlink vrf ovnvrf1337 metric 30 proto zebra
 check ip route add 233.253.0.0/24 via 192.168.20.20 dev hv1-mll onlink vrf ovnvrf1337 metric 40 proto zebra
 check ovn-nbctl --wait=hv sync
-check_row_count Learned_Route 1 ip_prefix=233.253.0.0/24 nexthop=192.168.20.20
+check_learned_route_count 1 ip_prefix=233.253.0.0/24 nexthop=192.168.20.20
 
 # Stopping the ovn-controller will clean up the route entries created by it.
 # We first need to unset dynamic-routing-maintain-vrf as otherwise it will
@@ -16171,21 +16170,20 @@ check ovn-nbctl set Logical_Router_Port internet-phys \
     options:dynamic-routing-maintain-vrf=false
 
 # Now we test route learning.
-check_row_count Learned_Route 0
+check_learned_route_count 0
 check ip route add 233.252.0.0/24 via 192.168.10.10 dev lo onlink vrf ovnvrf1337 proto zebra
 check ip route add 233.253.0.0/24 via 192.168.10.10 dev lo onlink vrf ovnvrf1337
 check ovn-nbctl --wait=hv sync
 # With a Gateway Router all LRPs are locally bound, and without explicit
 # mapping/filtering they will all learn the route.
-check_row_count Learned_Route 2
-lp=$(fetch_column port_binding _uuid logical_port=internet-phys)
-check_row_count Learned_Route 1 logical_port=$lp ip_prefix=233.252.0.0/24 nexthop=192.168.10.10
+check_learned_route_count 2
+check_learned_route_count 1 logical_port=internet-phys ip_prefix=233.252.0.0/24 nexthop=192.168.10.10
 
 # If we remove the route it is also gone.
 check ip route del 233.252.0.0/24 via 192.168.10.10 dev lo onlink vrf ovnvrf1337 proto zebra
 check ip route del 233.253.0.0/24 via 192.168.10.10 dev lo onlink vrf ovnvrf1337
 check ovn-nbctl --wait=hv sync
-check_row_count Learned_Route 0
+check_learned_route_count 0
 
 # By setting a learning interface filter will prevent us from learning the
 # route again. The Port referenced by the name does not even exist.
@@ -16193,14 +16191,14 @@ check ovn-nbctl --wait=hv set Logical_Router_Port internet-phys \
     options:dynamic-routing-port-name=thisportdoesnotexist
 check ip route add 233.252.0.0/24 via 192.168.10.10 dev lo onlink vrf ovnvrf1337 proto zebra
 check ovn-nbctl --wait=hv sync
-check_row_count Learned_Route 0
+check_learned_route_count 0
 
 # Setting the local ovsdb to map this port to "lo" will make route learning
 # work again.
 check ovs-vsctl set Open_vSwitch . \
     external-ids:dynamic-routing-port-mapping="thisisirrelevant=andjustfortesting,thisportdoesnotexist=lo"
 check ovn-nbctl --wait=hv sync
-check_row_count Learned_Route 1
+check_learned_route_count 1
 
 # Now we try the interface filter with an existing port.
 check ovn-nbctl lsp-add phys mylearninglsp
@@ -16215,7 +16213,7 @@ check ovn-nbctl --wait=hv set Logical_Router_Port internet-phys \
 check ip route add 233.253.0.0/24 via 192.168.20.20 dev hv1-mll onlink vrf ovnvrf1337 metric 30 proto zebra
 check ip route add 233.253.0.0/24 via 192.168.20.20 dev hv1-mll onlink vrf ovnvrf1337 metric 40 proto zebra
 check ovn-nbctl --wait=hv sync
-check_row_count Learned_Route 1 ip_prefix=233.253.0.0/24 nexthop=192.168.20.20
+check_learned_route_count 1 ip_prefix=233.253.0.0/24 nexthop=192.168.20.20
 
 # Stopping the ovn-controller will clean up the route entries created by it.
 # We first need to unset dynamic-routing-maintain-vrf as otherwise it will
@@ -17232,26 +17230,126 @@ check ovs-vsctl add-port br-int vif2 \
 check ip link set vif2 up
 check ip route add 3.3.3.0/24 via 2.2.2.2 dev vif2 onlink vrf ovnvrf1337 proto zebra
 check ovn-nbctl --wait=hv sync
-check_row_count Learned_Route 0
+check_learned_route_count 0
 
 AS_BOX([Bound vif2: routes learned on lrp2])
 check ovs-vsctl set interface vif2 external-ids:iface-id=vif2
 wait_for_ports_up vif2
-check_row_count Learned_Route 1 ip_prefix=3.3.3.0/24 \
+check_learned_route_count 1 ip_prefix=3.3.3.0/24 \
                                 nexthop=2.2.2.2      \
-                                logical_port=$lrp2
-check_row_count Learned_Route 1
+                                logical_port=lrp2
+check_learned_route_count 1
 
 AS_BOX([No dynamic-routing-port-name: routes learned on lrp1 and lrp2])
 check ovn-nbctl --wait=hv \
     remove logical_router_port lrp2 options dynamic-routing-port-name
-check_row_count Learned_Route 1 ip_prefix=3.3.3.0/24 \
+check_learned_route_count 1 ip_prefix=3.3.3.0/24 \
                                 nexthop=2.2.2.2      \
-                                logical_port=$lrp1
-check_row_count Learned_Route 1 ip_prefix=3.3.3.0/24 \
+                                logical_port=lrp1
+check_learned_route_count 1 ip_prefix=3.3.3.0/24 \
                                 nexthop=2.2.2.2      \
-                                logical_port=$lrp2
-check_row_count Learned_Route 2
+                                logical_port=lrp2
+check_learned_route_count 2
+
+OVN_CLEANUP_CONTROLLER([hv1])
+
+OVN_CLEANUP_NORTHD
+
+as
+OVS_TRAFFIC_VSWITCHD_STOP(["/failed to query port patch-.*/d
+/connection dropped.*/d"])
+
+AT_CLEANUP
+])
+
+OVN_FOR_EACH_NORTHD([
+AT_SETUP([dynamic-routing - route learning installs flows incrementally])
+
+VRF_RESERVE([1337])
+
+ovn_start
+OVS_TRAFFIC_VSWITCHD_START()
+
+ADD_BR([br-int])
+check ovs-vsctl                                                                     \
+    -- set Open_vSwitch . external-ids:system-id=hv1                                \
+    -- set Open_vSwitch . external-ids:ovn-remote=unix:$ovs_base/ovn-sb/ovn-sb.sock \
+    -- set Open_vSwitch . external-ids:ovn-encap-type=geneve                        \
+    -- set Open_vSwitch . external-ids:ovn-encap-ip=169.0.0.1                       \
+    -- set bridge br-int fail-mode=secure other-config:disable-in-band=true
+
+start_daemon ovn-controller
+check ovn-nbctl                                                 \
+    -- lr-add lr                                                \
+      -- set logical_router lr options:chassis=hv1              \
+                               options:dynamic-routing=true     \
+                               options:requested-tnl-key=1337   \
+    -- lrp-add lr lrp1 00:00:00:00:00:01 1.1.1.1/24             \
+    -- lrp-add lr lrp2 00:00:00:00:00:02 2.2.2.1/24             \
+      -- lrp-set-options lrp2 dynamic-routing-port-name=vif2    \
+                              dynamic-routing-maintain-vrf=true \
+    -- ls-add ls1                                               \
+      -- lsp-add-router-port ls1 ls1-lr lrp1                    \
+      -- lsp-add ls1 vif1                                       \
+    -- ls-add ls2                                               \
+      -- lsp-add-router-port ls2 ls2-lr lrp2                    \
+      -- lsp-add ls2 vif2
+
+check ovs-vsctl add-port br-int vif1 \
+    -- set interface vif1 type=internal external_ids:iface-id=vif1
+check ovs-vsctl add-port br-int vif2 \
+    -- set interface vif2 type=internal external_ids:iface-id=vif2
+check ip link set vif2 up
+check ovn-nbctl --wait=hv sync
+wait_for_ports_up vif1
+wait_for_ports_up vif2
+
+ip_routing=$(ovn-debug lflow-stage-to-oftable lr_in_ip_routing)
+
+learned_flow_count() {
+    ovs-ofctl dump-flows br-int table=$ip_routing | grep -c "nw_dst=$1" || true
+}
+
+lflow_output_stat() {
+    ovn-appctl -t ovn-controller inc-engine/show-stats lflow_output $1
+}
+
+# Counts the flows installed for learned routes since the controller started.
+flow_installs() {
+    ovn-appctl -t ovn-controller \
+        coverage/read-counter route_learned_flow_install
+}
+
+AS_BOX([First learned route is programmed])
+check ip route add 3.3.3.0/24 via 2.2.2.2 dev vif2 onlink vrf ovnvrf1337 proto zebra
+wait_learned_route_count 1 ip_prefix=3.3.3.0/24
+OVS_WAIT_UNTIL([test "$(learned_flow_count 3.3.3.0/24)" = 1])
+
+recompute_before=$(lflow_output_stat recompute)
+compute_before=$(lflow_output_stat compute)
+installs_before=$(flow_installs)
+
+AS_BOX([Adding a route installs one flow without recomputing lflow_output])
+check ip route add 4.4.4.0/24 via 2.2.2.2 dev vif2 onlink vrf ovnvrf1337 proto zebra
+OVS_WAIT_UNTIL([test "$(learned_flow_count 4.4.4.0/24)" = 1])
+
+check test "$(lflow_output_stat recompute)" = "$recompute_before"
+check test "$(lflow_output_stat compute)" -gt "$compute_before"
+check test "$(learned_flow_count 3.3.3.0/24)" = 1
+# Only the new route's group is reprogrammed, not every learned route.
+check test "$(flow_installs)" = "$((installs_before + 1))"
+
+AS_BOX([Deleting a route reprograms nothing else])
+compute_before=$(lflow_output_stat compute)
+installs_before=$(flow_installs)
+check ip route del 4.4.4.0/24 via 2.2.2.2 dev vif2 onlink vrf ovnvrf1337 proto zebra
+OVS_WAIT_UNTIL([test "$(learned_flow_count 4.4.4.0/24)" = 0])
+
+check test "$(lflow_output_stat recompute)" = "$recompute_before"
+check test "$(lflow_output_stat compute)" -gt "$compute_before"
+check test "$(learned_flow_count 3.3.3.0/24)" = 1
+check test "$(flow_installs)" = "$installs_before"
+check_learned_route_count 1 ip_prefix=3.3.3.0/24
 
 OVN_CLEANUP_CONTROLLER([hv1])
 
@@ -20710,7 +20808,7 @@ vni=10
 VRF_RESERVE([$vni])
 
 # This test validates that BGP learned routes work correctly:
-# 1. Routes added to the VRF appear in Learned_Route table
+# 1. Routes added to the VRF appear in ovn-controller route/learned-list
 # 2. Disabling dynamic-routing removes learned routes
 #
 # Topology:
@@ -20841,32 +20939,32 @@ OVS_WAIT_UNTIL([ovn-sbctl list Advertised_Route | grep ip_prefix | grep -Fe 10.1
 AT_CHECK([ip route add 10.10.3.1 via 20.0.0.25 vrf vrf-$vni proto zebra])
 
 # Verify learned route appears in SB database
-OVS_WAIT_UNTIL([ovn-sbctl list Learned_Route | grep ip_prefix | grep -Fe 10.10.3.1])
+OVS_WAIT_UNTIL([ovn-appctl -t ovn-controller route/learned-list | grep ip_prefix | grep -Fe 10.10.3.1])
 
 # Add a second route to the VRF (simulating BGP learning a route)
 AT_CHECK([ip route add 10.10.4.1 via 20.0.0.25 vrf vrf-$vni proto zebra])
 
-# Verify both routes appear in SB database.
-OVS_WAIT_FOR_OUTPUT([ovn-sbctl list Learned_Route | grep ip_prefix | sort], [0], [dnl
-ip_prefix           : "10.10.3.1"
-ip_prefix           : "10.10.4.1"
+# Verify both routes appear in the controller learned-route list.
+OVS_WAIT_FOR_OUTPUT([ovn-appctl -t ovn-controller route/learned-list | grep -o 'ip_prefix=[[^ ]]*' | sort], [0], [dnl
+ip_prefix=10.10.3.1
+ip_prefix=10.10.4.1
 ])
 
 # Remove one route.
 AS_BOX([$(date +%H:%M:%S.%03N) Remove first route])
 AT_CHECK([ip route del 10.10.4.1 via 20.0.0.25 vrf vrf-$vni])
 
-# Verify only one route remains in SB database.
-OVS_WAIT_FOR_OUTPUT([ovn-sbctl list Learned_Route | grep ip_prefix | sort], [0], [dnl
-ip_prefix           : "10.10.3.1"
+# Verify only one route remains.
+OVS_WAIT_FOR_OUTPUT([ovn-appctl -t ovn-controller route/learned-list | grep -o 'ip_prefix=[[^ ]]*' | sort], [0], [dnl
+ip_prefix=10.10.3.1
 ])
 
 # Remove second route.
 AS_BOX([$(date +%H:%M:%S.%03N) Remove second route])
 AT_CHECK([ip route del 10.10.3.1 via 20.0.0.25 vrf vrf-$vni])
 
-# Verify all routes removed from SB database.
-OVS_WAIT_FOR_OUTPUT([ovn-sbctl list Learned_Route | grep ip_prefix | sort], [0], [dnl
+# Verify all routes removed.
+OVS_WAIT_FOR_OUTPUT([ovn-appctl -t ovn-controller route/learned-list | grep -o 'ip_prefix=[[^ ]]*' | sort], [0], [dnl
 ])
 
 # Disable learning on router
@@ -20876,22 +20974,22 @@ AS_BOX([$(date +%H:%M:%S.%03N) Disable dynamic-route learning])
 AT_CHECK([ip route add 10.10.3.1 via 20.0.0.25 vrf vrf-$vni proto zebra])
 
 # Verify learned route appears in SB database
-wait_row_count Learned_Route 1 ip_prefix=10.10.3.1
+wait_learned_route_count 1 ip_prefix=10.10.3.1
 
 check ovn-nbctl --wait=hv set Logical_Router lr-frr options:dynamic-routing-no-learning=true
 
 # Verify routes do not appear in SB database.
-wait_row_count Learned_Route 0
+wait_learned_route_count 0
 
 check ovn-nbctl --wait=hv set Logical_Router lr-frr options:dynamic-routing-no-learning=false
 
 # Verify learned route appears in SB database
-wait_row_count Learned_Route 1 ip_prefix=10.10.3.1
+wait_learned_route_count 1 ip_prefix=10.10.3.1
 
 AT_CHECK([ip route del 10.10.3.1 via 20.0.0.25 vrf vrf-$vni])
 
 # Verify all routes removed from SB database.
-wait_row_count Learned_Route 0
+wait_learned_route_count 0
 
 # Disable learning on router then attempt to add route
 AS_BOX([$(date +%H:%M:%S.%03N) Disable dynamic-route learning 2])
@@ -20902,19 +21000,19 @@ check ovn-nbctl --wait=hv set Logical_Router lr-frr options:dynamic-routing-no-l
 AT_CHECK([ip route add 10.10.3.1 via 20.0.0.25 vrf vrf-$vni proto zebra])
 
 # Verify routes do not appear in SB database.
-wait_row_count Learned_Route 0
+wait_learned_route_count 0
 
 check ovn-nbctl --wait=hv remove Logical_Router lr-tenant options dynamic-routing dynamic-routing-vrf-id
 
 check ovn-nbctl --wait=hv set Logical_Router lr-frr options:dynamic-routing-no-learning=false
 
 # Verify learned route appears in SB database
-wait_row_count Learned_Route 1 ip_prefix=10.10.3.1
+wait_learned_route_count 1 ip_prefix=10.10.3.1
 
 AT_CHECK([ip route del 10.10.3.1 via 20.0.0.25 vrf vrf-$vni])
 
 # Verify all routes removed from SB database.
-wait_row_count Learned_Route 0
+wait_learned_route_count 0
 
 # Disable learning on router port
 AS_BOX([$(date +%H:%M:%S.%03N) Disable dynamic-route learning on port])
@@ -20924,7 +21022,7 @@ check ovn-nbctl --wait=hv set Logical_Router_Port lrp-local-bgp-port options:dyn
 AT_CHECK([ip route add 10.10.3.1 via 20.0.0.25 vrf vrf-$vni proto zebra])
 
 # Verify routes do not appear in SB database.
-wait_row_count Learned_Route 0
+wait_learned_route_count 0
 
 AT_CHECK([ip route del 10.10.3.1 via 20.0.0.25 vrf vrf-$vni])
 check ovn-nbctl --wait=hv set Logical_Router_Port lrp-local-bgp-port options:dynamic-routing-no-learning=false
@@ -20933,12 +21031,12 @@ check ovn-nbctl --wait=hv set Logical_Router_Port lrp-local-bgp-port options:dyn
 AT_CHECK([ip route add 10.10.3.1 via 20.0.0.25 vrf vrf-$vni proto zebra])
 
 # Verify learned route appears in SB database
-wait_row_count Learned_Route 1 ip_prefix=10.10.3.1
+wait_learned_route_count 1 ip_prefix=10.10.3.1
 
 AT_CHECK([ip route del 10.10.3.1 via 20.0.0.25 vrf vrf-$vni])
 
 # Verify all routes removed from SB database.
-wait_row_count Learned_Route 0
+wait_learned_route_count 0
 
 # Disable learning on router and enable on port
 AS_BOX([$(date +%H:%M:%S.%03N) Disable dynamic-route learning on router, but not port])
@@ -20949,7 +21047,7 @@ check ovn-nbctl --wait=hv set Logical_Router_Port lrp-local-bgp-port options:dyn
 AT_CHECK([ip route add 10.10.3.1 via 20.0.0.25 vrf vrf-$vni proto zebra])
 
 # Verify routes do not appear in SB database.
-wait_row_count Learned_Route 1
+wait_learned_route_count 1
 
 AT_CHECK([ip route del 10.10.3.1 via 20.0.0.25 vrf vrf-$vni])
 check ovn-nbctl --wait=hv set Logical_Router lr-frr options:dynamic-routing-no-learning=false
@@ -20958,7 +21056,7 @@ check ovn-nbctl --wait=hv set Logical_Router lr-frr options:dynamic-routing-no-l
 AT_CHECK([ip route add 10.10.3.1 via 20.0.0.25 vrf vrf-$vni proto zebra])
 
 # Verify learned route appears in SB database
-wait_row_count Learned_Route 1 ip_prefix=10.10.3.1
+wait_learned_route_count 1 ip_prefix=10.10.3.1
 
 # Disable dynamic routing
 AS_BOX([$(date +%H:%M:%S.%03N) Disable dynamic-routing])
@@ -20969,17 +21067,17 @@ check_row_count Port_Binding 0 logical_port=lrp-local-bgp-port 'options:dynamic-
 AT_CHECK([ip route add 10.10.4.1 via 20.0.0.25 vrf vrf-$vni proto zebra])
 
 # Verify learned routes are removed as dynamic-routing=false
-OVS_WAIT_FOR_OUTPUT([ovn-sbctl list Learned_Route | grep ip_prefix | sort], [0], [dnl
+OVS_WAIT_FOR_OUTPUT([ovn-appctl -t ovn-controller route/learned-list | grep ip_prefix | sort], [0], [dnl
 ])
 
 # Re-enable dynamic routing
 check ovn-nbctl --wait=hv set Logical_Router lr-frr options:dynamic-routing=true
 check_row_count Port_Binding 1 logical_port=lrp-local-bgp-port 'options:dynamic-routing=true'
 
-# Verify both routes appear in SB database.
-OVS_WAIT_FOR_OUTPUT([ovn-sbctl list Learned_Route | grep ip_prefix | sort], [0], [dnl
-ip_prefix           : "10.10.3.1"
-ip_prefix           : "10.10.4.1"
+# Verify both routes appear in the controller learned-route list.
+OVS_WAIT_FOR_OUTPUT([ovn-appctl -t ovn-controller route/learned-list | grep -o 'ip_prefix=[[^ ]]*' | sort], [0], [dnl
+ip_prefix=10.10.3.1
+ip_prefix=10.10.4.1
 ])
 
 # Verify that we can have one router read and another write from the same
@@ -20999,11 +21097,13 @@ check ovn-nbctl --wait=hv set Logical_Router lr-tenant \
     options:dynamic-routing-redistribute=static \
     options:dynamic-routing-no-learning=true
 
-# Verify that lr-frr has Learned_Routes but lr-tenant does not.
+# Verify that lr-frr has learned routes but lr-tenant does not.
 dp_frr=$(fetch_column Datapath_Binding _uuid external_ids:name=lr-frr)
 dp_tenant=$(fetch_column Datapath_Binding _uuid external_ids:name=lr-tenant)
-wait_row_count Learned_Route 2 datapath=$dp_frr
-wait_row_count Learned_Route 0 datapath=$dp_tenant
+dp_frr_key=$(fetch_column datapath_binding tunnel_key external_ids:name=lr-frr)
+dp_tenant_key=$(fetch_column datapath_binding tunnel_key external_ids:name=lr-tenant)
+wait_learned_route_count 2 datapath=$dp_frr_key
+wait_learned_route_count 0 datapath=$dp_tenant_key
 wait_row_count Advertised_Route 0 datapath=$dp_frr
 wait_row_count Advertised_Route 1 datapath=$dp_tenant
 OVN_ROUTE_EQUAL([vrf-$vni], [dnl
@@ -21025,7 +21125,7 @@ AS_BOX([$(date +%H:%M:%S.%03N) Remove lrp])
 check ovn-nbctl --wait=hv lrp-del lrp-local-bgp-port
 
 # Verify routes do not appear in SB database.
-OVS_WAIT_FOR_OUTPUT([ovn-sbctl list Learned_Route | grep ip_prefix | sort], [0], [dnl
+OVS_WAIT_FOR_OUTPUT([ovn-appctl -t ovn-controller route/learned-list | grep ip_prefix | sort], [0], [dnl
 ])
 
 # Cleanup VRF route
@@ -21427,30 +21527,30 @@ OVS_WAIT_UNTIL([grep -q "Auto-discovered veth peer 'bgp-peer' for port "\
 AT_CHECK([ip route add 10.10.1.1 via 1.1.1.2 vrf vrf-$vni proto zebra])
 
 # Verify learned route appears in SB database
-OVS_WAIT_UNTIL([ovn-sbctl list Learned_Route | grep ip_prefix | grep -Fe 10.10.1.1])
+OVS_WAIT_UNTIL([ovn-appctl -t ovn-controller route/learned-list | grep ip_prefix | grep -Fe 10.10.1.1])
 
 # Add a second route
 AT_CHECK([ip route add 10.10.2.1 via 1.1.1.2 vrf vrf-$vni proto zebra])
 
-# Verify both routes appear in SB database
-OVS_WAIT_FOR_OUTPUT([ovn-sbctl list Learned_Route | grep ip_prefix | sort], [0], [dnl
-ip_prefix           : "10.10.1.1"
-ip_prefix           : "10.10.2.1"
+# Verify both routes appear in the controller learned-route list
+OVS_WAIT_FOR_OUTPUT([ovn-appctl -t ovn-controller route/learned-list | grep -o 'ip_prefix=[[^ ]]*' | sort], [0], [dnl
+ip_prefix=10.10.1.1
+ip_prefix=10.10.2.1
 ])
 
 # Remove one route
 AT_CHECK([ip route del 10.10.2.1 via 1.1.1.2 vrf vrf-$vni])
 
 # Verify only one route remains
-OVS_WAIT_FOR_OUTPUT([ovn-sbctl list Learned_Route | grep ip_prefix | sort], [0], [dnl
-ip_prefix           : "10.10.1.1"
+OVS_WAIT_FOR_OUTPUT([ovn-appctl -t ovn-controller route/learned-list | grep -o 'ip_prefix=[[^ ]]*' | sort], [0], [dnl
+ip_prefix=10.10.1.1
 ])
 
 # Remove second route
 AT_CHECK([ip route del 10.10.1.1 via 1.1.1.2 vrf vrf-$vni])
 
 # Verify all routes removed
-OVS_WAIT_FOR_OUTPUT([ovn-sbctl list Learned_Route | grep ip_prefix | sort], [0], [dnl
+OVS_WAIT_FOR_OUTPUT([ovn-appctl -t ovn-controller route/learned-list | grep -o 'ip_prefix=[[^ ]]*' | sort], [0], [dnl
 ])
 
 # Delete logical objects before cleanup
@@ -21474,7 +21574,7 @@ OVN_FOR_EACH_NORTHD([
 AT_SETUP([dynamic-routing - BGP learned routes and removing them when ovn-controller stops])
 
 # This test validates that BGP learned routes work correctly:
-# 1. Routes added to the VRF appear in Learned_Route table
+# 1. Routes added to the VRF appear in ovn-controller route/learned-list
 # 2. Stopping ovn-controller remove learned routes
 #
 # Topology:
@@ -21565,34 +21665,34 @@ wait_row_count Advertised_Route 1 ip_prefix=10.10.2.1
 check ip route add 10.10.3.1 via 20.0.0.25 vrf vrf-$id proto zebra
 
 # Verify learned route appears in SB database
-wait_row_count Learned_Route 1 ip_prefix=10.10.3.1
+wait_learned_route_count 1 ip_prefix=10.10.3.1
 
 # Add a second route to the VRF (simulating BGP learning a route)
 ip route add 10.10.4.1 via 20.0.0.25 vrf vrf-$id proto zebra
 
 # Verify both routes appear in SB database.
-wait_row_count Learned_Route 1 ip_prefix=10.10.4.1
+wait_learned_route_count 1 ip_prefix=10.10.4.1
 
 # Remove one route.
 AS_BOX([$(date +%H:%M:%S.%03N) Remove first route])
 check ip route del 10.10.4.1 via 20.0.0.25 vrf vrf-$id proto zebra
 
 # Verify only one route remains in SB database.
-wait_row_count Learned_Route 1
-check_row_count Learned_Route 1 ip_prefix=10.10.3.1
+wait_learned_route_count 1
+check_learned_route_count 1 ip_prefix=10.10.3.1
 
 # Remove second route.
 AS_BOX([$(date +%H:%M:%S.%03N) Remove second route])
 check ip route del 10.10.3.1 via 20.0.0.25 vrf vrf-$id
 
 # Verify all routes removed from SB database.
-wait_row_count Learned_Route 0
+wait_learned_route_count 0
 
 # Add again a route to the VRF (simulating BGP learning a route)
 check ip route add 10.10.3.1 via 20.0.0.25 vrf vrf-$id proto zebra
 
 # Verify learned route appears in SB database
-wait_row_count Learned_Route 1 ip_prefix=10.10.3.1
+wait_learned_route_count 1 ip_prefix=10.10.3.1
 
 # Disable dynamic routing
 AS_BOX([$(date +%H:%M:%S.%03N) Disable dynamic-routing])
@@ -21603,23 +21703,23 @@ check_row_count Port_Binding 0 logical_port=cr-lrp-local-bgp-port 'options:dynam
 check ip route add 10.10.4.1 via 20.0.0.25 vrf vrf-$id proto zebra
 
 # Verify learned routes are removed as dynamic-routing=false
-wait_row_count Learned_Route 0
+wait_learned_route_count 0
 
 # Re-enable dynamic routing
 check ovn-nbctl --wait=sb set Logical_Router lr-frr options:dynamic-routing=true
 check_row_count Port_Binding 1 logical_port=cr-lrp-local-bgp-port 'options:dynamic-routing=true'
 
 # Verify both routes appear in SB database.
-wait_row_count Learned_Route 1 ip_prefix=10.10.3.1
-wait_row_count Learned_Route 1 ip_prefix=10.10.4.1
-check_row_count Learned_Route 2
+wait_learned_route_count 1 ip_prefix=10.10.3.1
+wait_learned_route_count 1 ip_prefix=10.10.4.1
+check_learned_route_count 2
 
 # Stop ovn-controller
 OVN_CLEANUP_CONTROLLER([hv1], [], [], [lr-frr])
 check ovn-nbctl --wait=sb sync
 
 # Verify routes are removed in SB database.
-wait_row_count Learned_Route 0
+wait_learned_route_count 0
 
 OVN_CLEANUP_NORTHD
 

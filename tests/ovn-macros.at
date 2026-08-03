@@ -964,6 +964,45 @@ wait_row_count() {
       ovn-${db}ctl list $table])
 }
 
+# count_learned_routes [CONDITION...]
+#
+# Counts learned routes reported by ovn-controller route/learned-list.
+# Conditions are grep patterns (e.g. logical_port=lr0-sw0 ip_prefix=10.0.0.0/24).
+count_learned_routes() {
+    local out=$(ovn-appctl -t ovn-controller route/learned-list 2>/dev/null || true)
+    local cond
+    for cond in "$@"; do
+        out=$(echo "$out" | grep "$cond" || true)
+    done
+    if test -z "$out"; then
+        echo 0
+    else
+        echo "$out" | wc -l
+    fi
+}
+
+# check_learned_route_count COUNT [CONDITION...]
+check_learned_route_count() {
+    local count=$1; shift
+    local found=$(count_learned_routes "$@")
+    echo
+    echo "Checking for $count learned routes${1+ with $*}... found $found"
+    if test "$count" != "$found"; then
+        ovn-appctl -t ovn-controller route/learned-list
+        AT_FAIL_IF([:])
+    fi
+}
+
+# wait_learned_route_count COUNT [CONDITION...]
+wait_learned_route_count() {
+    local count=$1; shift
+    local a=$1 b=$2 c=$3 d=$4 e=$5
+    echo "Waiting until $count learned routes${1+ with $*}..."
+    OVS_WAIT_UNTIL([test $count = $(count_learned_routes $a $b $c $d $e)],[
+      echo "learned routes: $(count_learned_routes $a $b $c $d $e) rows match instead of expected $count:"
+      ovn-appctl -t ovn-controller route/learned-list])
+}
+
 # fetch_column [DATABASE:]TABLE COLUMN [CONDITION...]
 #
 # Fetches and prints all the values of COLUMN in the rows of TABLE

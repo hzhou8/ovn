@@ -46548,14 +46548,9 @@ ovs-vsctl -- add-port br-int vif1 -- \
 
 wait_for_ports_up
 
-# Add a learnt route manually
-dp_uuid=$(fetch_column datapath _uuid external_ids:name=lr0)
-lrp_uuid=$(fetch_column port_binding _uuid logical_port=lr0-public)
-
-check_uuid ovn-sbctl create learned_route datapath=$dp_uuid logical_port=$lrp_uuid \
-ip_prefix=0.0.0.0/0 nexthop='"fe80::42:ff:fe00:1ff"'
-
-check ovn-nbctl --wait=hv sync
+# Add an IPv4 default route with an IPv6 link-local nexthop out lr0-public.
+check ovn-nbctl --wait=hv lr-route-add lr0 0.0.0.0/0 \
+    fe80::42:ff:fe00:1ff lr0-public
 
 # Send an IPv4 packet from sw0-port1 destined to outside
 packet=$(fmt_pkt "Ether(dst='00:00:00:00:ff:01', src='50:54:00:00:00:01')/ \

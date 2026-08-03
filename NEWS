@@ -1,5 +1,11 @@
 Post v26.03.0
 -------------
+   - Dynamic routing learned routes are now installed locally by
+     ovn-controller as OpenFlow in the logical router IP routing tables,
+     instead of being written to the SB Learned_Route table and translated
+     by ovn-northd.  Learned routes are chassis-local.  Use
+     ``ovn-appctl -t ovn-controller route/learned-list`` to inspect them.
+     The SB Learned_Route table has been removed (schema 21.12.0).
    - Logical_Router_Port: Added a new "options:dhcpv4_primary_ip" key
      that selects which of the port's IPv4 addresses ovn-northd uses as
      the relay agent address (giaddr) in relayed DHCP packets.  When

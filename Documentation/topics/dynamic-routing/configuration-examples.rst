@@ -295,9 +295,9 @@ table::
 
     $ ovn-sbctl list Advertised_Route
 
-Check for learned routes from external peers::
+Check for learned routes from external peers on a chassis::
 
-    $ ovn-sbctl list Learned_Route
+    $ ovn-appctl -t ovn-controller route/learned-list
 
 Checking the VRF and Kernel Routes
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -364,8 +364,9 @@ See Also
 - ``ovn-nb``\(5) --- Full reference for all ``Logical_Router``
   and ``Logical_Router_Port`` dynamic routing options.
 
-- ``ovn-sb``\(5) --- Documentation of the ``Advertised_Route``
-  and ``Learned_Route`` tables.
+- ``ovn-sb``\(5) --- Documentation of the ``Advertised_Route`` table.
+  Inspect locally learned routes with
+  ``ovn-appctl -t ovn-controller route/learned-list``.
 
 - ``ovn-controller``\(8) --- Controller-side configuration options
   including ``dynamic-routing-port-mapping``.

@@ -4024,9 +4024,8 @@ tcp.flags = RST;
         </p>
 
         <p>
-          This option disables adding routes to
-          <ref table="Learned_Route" db="OVN_Southbound"/> and will also
-          remove learned routes.
+          This option disables installing locally learned dynamic routes
+          and removes any previously learned routes on the chassis.
         </p>
       </column>
 
@@ -5485,37 +5484,6 @@ tcp.flags = RST;
 
       An announcing chassis can use this information to check if this
       destination is local and adjust the route priorities based on that.
-    </column>
-
-    <column name="external_ids">
-      See <em>External IDs</em> at the beginning of this document.
-    </column>
-  </table>
-
-  <table name="Learned_Route">
-    <p>
-      Each record represents a route that learned by ovn using some dynamic
-      routing logic outside of ovn.
-      It is populated by <code>ovn-controller</code> with routes it learns
-      locally.
-    </p>
-
-    <column name="datapath">
-      The datapath belonging to the
-      <code>OVN_Northbound.Logical_Router</code> that this route is valid
-      for.
-    </column>
-
-    <column name="logical_port">
-      This is the <ref table="Port_Binding"/> that the route was learned on.
-    </column>
-
-    <column name="ip_prefix">
-      IP prefix of this route (e.g. 192.168.100.0/24).
-    </column>
-
-    <column name="nexthop">
-      This is the nexthop ip we learned from outside of OVN.
     </column>
 
     <column name="external_ids">

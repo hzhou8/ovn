@@ -40,6 +40,7 @@
 #include "lib/ovn-nb-idl.h"
 #include "lib/ovn-sb-idl.h"
 #include "lib/ovn-util.h"
+#include "ovn-route-prio.h"
 #include "lib/lb.h"
 #include "lflow-mgr.h"
 #include "memory.h"
@@ -384,15 +385,7 @@ static const char *reg_ct_state[] = {
  *  4. static routes, including ic-learned.
  *  5. routes learned from the outside via ovn-controller (e.g. bgp)
  *  6. (lowest priority) src-ip routes */
-#define ROUTE_PRIO_OFFSET_MULTIPLIER 12
-#define ROUTE_PRIO_OFFSET_PRIORITY_STATIC 10
-#define ROUTE_PRIO_OFFSET_IC_LEARNED_CONNECTED_WITH_TABLEID 8
-#define ROUTE_PRIO_OFFSET_CONNECTED 6
-#define ROUTE_PRIO_OFFSET_STATIC 4
-#define ROUTE_PRIO_OFFSET_LEARNED 2
-
-#define ROUTE_PRIO_BASE_SHIFT ((MAX_PREFIX_LEN + 1) * \
-                              ROUTE_PRIO_OFFSET_MULTIPLIER)
+#define ROUTE_PRIO_BASE_SHIFT OVN_ROUTE_PRIO_BASE_SHIFT
 
 /* ovn_stages used by northd for logical switches and logical routers.
  * The first three components are combined to form the constant stage's
@@ -12751,34 +12744,6 @@ build_route_prefix_s(const struct in6_addr *prefix, unsigned int plen)
     return prefix_s;
 }
 
-static int
-get_route_offset(enum route_source source,
-                 bool override_connected)
-{
-    switch (source) {
-    case ROUTE_SOURCE_CONNECTED:
-    case ROUTE_SOURCE_IC_DYNAMIC:
-        return override_connected
-               ? ROUTE_PRIO_OFFSET_IC_LEARNED_CONNECTED_WITH_TABLEID
-               : ROUTE_PRIO_OFFSET_CONNECTED;
-
-    case ROUTE_SOURCE_STATIC:
-        return override_connected
-               ? ROUTE_PRIO_OFFSET_PRIORITY_STATIC
-               : ROUTE_PRIO_OFFSET_STATIC;
-
-    case ROUTE_SOURCE_LEARNED:
-        return ROUTE_PRIO_OFFSET_LEARNED;
-
-    /* Dynamic route types (NAT, LB, and connected-as-host) are not used. */
-    case ROUTE_SOURCE_NAT:
-    case ROUTE_SOURCE_LB:
-    case ROUTE_SOURCE_CONNECTED_AS_HOST:
-    default:
-        OVS_NOT_REACHED();
-    }
-}
-
 static uint16_t
 calc_priority(int plen,
               enum route_source source,
@@ -12786,12 +12751,9 @@ calc_priority(int plen,
               bool is_src_route,
               bool has_protocol_match)
 {
-    int priority = is_src_route ? 0 :
-                   get_route_offset(source, override_connected);
-
-    priority += (plen * ROUTE_PRIO_OFFSET_MULTIPLIER) + has_protocol_match;
-
-    return priority + ROUTE_PRIO_BASE_SHIFT;
+    return ovn_route_calc_priority(plen, (enum ovn_route_source) source,
+                                   override_connected, is_src_route,
+                                   has_protocol_match);
 }
 
 bool
@@ -12988,8 +12950,7 @@ build_ecmp_route_flow(struct lflow_table *lflows,
 
     char *prefix_s = build_route_prefix_s(&eg->prefix, eg->plen);
 
-    if (eg->route_table_id || eg->source == ROUTE_SOURCE_STATIC
-        || eg->source == ROUTE_SOURCE_LEARNED) {
+    if (eg->route_table_id || eg->source == ROUTE_SOURCE_STATIC) {
         ds_put_format(&route_match, "%s == %d && ", REG_ROUTE_TABLE_ID,
                       eg->route_table_id);
     }
@@ -13149,8 +13110,7 @@ add_route(struct lflow_table *lflows, const struct ovn_datapath *od,
     if (op_inport) {
         ds_put_format(&match, "inport == %s && ", op_inport->json_key);
     }
-    if (rtb_id || source == ROUTE_SOURCE_STATIC ||
-        source == ROUTE_SOURCE_LEARNED) {
+    if (rtb_id || source == ROUTE_SOURCE_STATIC) {
         ds_put_format(&match, "%s == %d && ", REG_ROUTE_TABLE_ID, rtb_id);
     }
 

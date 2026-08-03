@@ -35,7 +35,6 @@ struct ic_context {
     struct ovsdb_idl_index *nbrec_port_by_name;
     struct ovsdb_idl_index *sbrec_chassis_by_name;
     struct ovsdb_idl_index *sbrec_datapath_binding_by_nb_uuid;
-    struct ovsdb_idl_index *sbrec_learned_route_by_datapath;
     struct ovsdb_idl_index *sbrec_port_binding_by_name;
     struct ovsdb_idl_index *sbrec_service_monitor_by_remote_type;
     struct ovsdb_idl_index *sbrec_service_monitor_by_ic_learned;

@@ -67,7 +67,6 @@ VLOG_DEFINE_THIS_MODULE(inc_proc_ic);
     SB_NODE(datapath_binding, "datapath_binding") \
     SB_NODE(port_binding, "port_binding") \
     SB_NODE(service_monitor, "service_monitor") \
-    SB_NODE(learned_route, "learned_route") \
     SB_NODE(address_set, "address_set")
 
     enum sb_engine_node {
@@ -187,7 +186,6 @@ void inc_proc_ic_init(struct ovsdb_idl_loop *nb,
     engine_add_input(&en_ic, &en_sb_datapath_binding, NULL);
     engine_add_input(&en_ic, &en_sb_port_binding, NULL);
     engine_add_input(&en_ic, &en_sb_service_monitor, NULL);
-    engine_add_input(&en_ic, &en_sb_learned_route, NULL);
     engine_add_input(&en_ic, &en_sb_address_set, NULL);
 
     engine_add_input(&en_ic, &en_icnb_ic_nb_global, NULL);

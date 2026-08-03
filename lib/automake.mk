@@ -41,6 +41,8 @@ lib_libovn_la_SOURCES = \
 	lib/ofctrl-seqno.h \
 	lib/ovn-l7.h \
 	lib/ovn-l7.c \
+	lib/ovn-route-prio.c \
+	lib/ovn-route-prio.h \
 	lib/ovn-util.c \
 	lib/ovn-util.h \
 	lib/logical-fields.c \

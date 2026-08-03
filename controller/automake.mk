@@ -82,14 +82,17 @@ controller_ovn_controller_SOURCES += \
 	controller/nexthop-exchange.c \
 	controller/route-exchange-netlink.h \
 	controller/route-exchange-netlink.c \
-	controller/route-exchange.c
+	controller/route-exchange.c \
+	controller/route-learned.c \
+	controller/route-learned.h
 else
 controller_ovn_controller_SOURCES += \
 	controller/host-if-monitor-stub.c \
 	controller/ovn-netlink-notifier-stub.c \
 	controller/neighbor-exchange-stub.c \
 	controller/nexthop-exchange-stub.c \
-	controller/route-exchange-stub.c
+	controller/route-exchange-stub.c \
+	controller/route-learned-stub.c
 endif
 
 controller_ovn_controller_LDADD = lib/libovn.la $(OVS_LIBDIR)/libopenvswitch.la

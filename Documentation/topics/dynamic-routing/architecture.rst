@@ -100,14 +100,14 @@ logical router that has dynamic routing enabled.
     |                        OVN Southbound Database                   |
     |                                                                  |
     |  +-------------------------+   +------------------------------+  |
-    |  | Learned_Route           |   | Advertised_Route             |  |
-    |  |                         |   |                              |  |
-    |  | Populated by            |   | Populated by ovn-northd      |  |
-    |  | ovn-controller with     |   | based on LR config:          |  |
-    |  | routes learned from     |   |  - connected routes          |  |
-    |  | the VRF routing table   |   |  - connected-as-host routes  |  |
-    |  | (dynamic protocols      |   |  - static routes             |  |
-    |  |  only, not RTPROT_OVN)  |   |  - NAT external IPs          |  |
+    |  | (learned routes are     |   | Advertised_Route             |  |
+    |  |  chassis-local; see     |   |                              |  |
+    |  |  below)                 |   | Populated by ovn-northd      |  |
+    |  |                         |   | based on LR config:          |  |
+    |  |                         |   |  - connected routes          |  |
+    |  |                         |   |  - connected-as-host routes  |  |
+    |  |                         |   |  - static routes             |  |
+    |  |                         |   |  - NAT external IPs          |  |
     |  |                         |   |  - Load Balancer VIPs        |  |
     |  +-------------------------+   +------------------------------+  |
     |                                                                  |
@@ -117,11 +117,12 @@ logical router that has dynamic routing enabled.
     +------------------------------------------------------------------+
     |                          ovn-northd                              |
     |                                                                  |
-    |  Reads Learned_Route records and generates logical flows in the  |
-    |  IP routing stage of the logical router pipeline.                |
-    |                                                                  |
     |  Reads NB Logical_Router configuration and populates             |
     |  Advertised_Route records in the SB database.                    |
+    |                                                                  |
+    |  Static and connected routes are translated into logical flows   |
+    |  in the IP routing stage.  Learned routes are installed locally  |
+    |  by ovn-controller (see IP Route Learning).                      |
     |                                                                  |
     +------------------------------------------------------------------+
 
@@ -203,11 +204,12 @@ routing peers.
     |              ovn-controller                                      |
     |                                                                  |
     |  Advertises routes         Learns routes from VRF                |
-    |  into VRF table            and writes to SB Learned_Route        |
+    |  into VRF table            and installs OpenFlow in the LR IP    |
+    |                            routing table (chassis-local)         |
     +------------------+-----------------------------------------------+
                        |
                  OVN SB Database
-         (Advertised_Route / Learned_Route)
+                    (Advertised_Route)
                        |
     +------------------+------------------------------------------------+
     |                       ovn-northd                                  |
@@ -258,10 +260,11 @@ these routes and advertises them to external peers.
 Conversely, when the routing daemon learns routes from external peers, it
 installs them into the same VRF table.  ``ovn-controller`` detects these
 new routes via Netlink (filtering out routes it installed itself using the
-``RTPROT_OVN`` protocol marker) and creates corresponding
-``Learned_Route`` records in the SB database.  ``ovn-northd`` then
-generates logical flows in the IP routing pipeline stage to implement
-forwarding for these learned routes.
+``RTPROT_OVN`` protocol marker) and installs forwarding state locally.
+Learned routes compete in the same OpenFlow longest-prefix-match table as
+northd-programmed static and connected routes, using the same priority
+formula.  They are **chassis-local**: only the learning chassis programs
+OpenFlow for routes it learns from its VRF.
 
 IP Route Advertisement
 ----------------------
@@ -360,27 +363,29 @@ The following filtering rules apply:
 
 - Link-local prefixes are **skipped**.
 
-For each qualifying route, ``ovn-controller`` creates a ``Learned_Route``
-record in the Southbound database containing the datapath, logical port,
-IP prefix, and nexthop.
+For each qualifying route, ``ovn-controller`` stores the route in an
+in-memory table on the learning chassis and installs OpenFlow flows in the
+``lr_in_ip_routing`` and ``lr_in_ip_routing_ecmp`` pipeline stages (the
+same logical tables used by northd for static and connected routes).
+Multipath learned prefixes are grouped into ECMP flows matching northd
+behavior.
 
-Flow Generation by ovn-northd
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Inspecting Learned Routes
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``ovn-northd`` reads the ``Learned_Route`` table and generates logical
-flows in the IP routing stage of the logical router processing pipeline.
-These flows implement longest-prefix-match forwarding for the learned
-routes.  Learned routes receive a lower priority than static routes,
-ensuring that explicitly configured routes always take precedence.
+Use the controller management interface to list locally learned routes on
+a chassis::
+
+    $ ovn-appctl -t ovn-controller route/learned-list
 
 Disabling Route Learning
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
 Route learning can be disabled on a per-router or per-port basis by
 setting the ``dynamic-routing-no-learning`` option to ``true``.  When
-this option is enabled, ``ovn-controller`` does not create
-``Learned_Route`` records for the affected router or port and removes any
-previously learned routes.
+this option is enabled, ``ovn-controller`` does not learn routes for the
+affected router or port and removes any previously learned routes and
+OpenFlow state from the local chassis.
 
 VRF Management
 --------------

@@ -1174,30 +1174,6 @@ lrp_is_l3dgw(const struct ovn_port *op)
            (op->nbrp->n_gateway_chassis || op->nbrp->ha_chassis_group);
 }
 
-/* This function returns false if 'op' is NULL, sb port binding different
- * from logical port from learned route, datapath has dynamic routing disabled
- * or if port is lrp l3dgw with no chassis.
- * True otherwise.
- */
-static inline bool
-ovn_port_must_learn_route(const struct ovn_port *op,
-                          const struct sbrec_learned_route *sb_route)
-{
-    if (!op) {
-        return false;
-    }
-    if (op->sb != sb_route->logical_port) {
-        return false;
-    }
-    if (!op->od || !op->od->dynamic_routing) {
-        return false;
-    }
-    if (lrp_is_l3dgw(op) && (!op->cr_port->sb || !op->cr_port->sb->chassis)) {
-        return false;
-    }
-    return true;
-}
-
  /* Returns true if datapath 'od' operates in centralized mode on gateway.
  *
  * Returns false when datapath is distributed. A datapath is distributed

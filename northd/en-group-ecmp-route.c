@@ -22,7 +22,6 @@
 #include "northd.h"
 
 #include "en-group-ecmp-route.h"
-#include "en-learned-route-sync.h"
 #include "openvswitch/hmap.h"
 
 VLOG_DEFINE_THIS_MODULE(en_group_ecmp_route);
@@ -355,17 +354,11 @@ add_route(struct group_ecmp_datapath *gn, const struct parsed_route *pr)
 
 static void
 group_ecmp_route(struct group_ecmp_route_data *data,
-                 const struct routes_data *routes_data,
-                 const struct learned_route_sync_data *learned_route_data)
+                 const struct routes_data *routes_data)
 {
     struct group_ecmp_datapath *gn;
     const struct parsed_route *pr;
     HMAP_FOR_EACH (pr, key_node, &routes_data->parsed_routes) {
-        gn = group_ecmp_datapath_lookup_or_add(data, pr->od);
-        add_route(gn, pr);
-    }
-
-    HMAP_FOR_EACH (pr, key_node, &learned_route_data->parsed_routes) {
         gn = group_ecmp_datapath_lookup_or_add(data, pr->od);
         add_route(gn, pr);
     }
@@ -379,10 +372,8 @@ en_group_ecmp_route_run(struct engine_node *node, void *_data)
 
     struct routes_data *routes_data
         = engine_get_input_data("routes", node);
-    struct learned_route_sync_data *learned_route_data
-        = engine_get_input_data("learned_route_sync", node);
 
-    group_ecmp_route(data, routes_data, learned_route_data);
+    group_ecmp_route(data, routes_data);
 
     return EN_UPDATED;
 }
@@ -462,62 +453,6 @@ handle_deleted_route(struct group_ecmp_route_data *data,
 
     hmapx_add(updated_routes, node);
     return true;
-}
-
-enum engine_input_handler_result
-group_ecmp_route_learned_route_change_handler(struct engine_node *eng_node,
-                                              void *_data)
-{
-    struct group_ecmp_route_data *data = _data;
-    struct learned_route_sync_data *learned_route_data
-        = engine_get_input_data("learned_route_sync", eng_node);
-
-    if (!learned_route_data->tracked) {
-        data->tracked = false;
-        return EN_UNHANDLED;
-    }
-
-    data->tracked = true;
-
-    struct hmapx updated_routes = HMAPX_INITIALIZER(&updated_routes);
-
-    const struct hmapx_node *hmapx_node;
-    const struct parsed_route *pr;
-    HMAPX_FOR_EACH (hmapx_node,
-                    &learned_route_data->trk_data.trk_deleted_parsed_route) {
-        pr = hmapx_node->data;
-        if (!handle_deleted_route(data, pr, &updated_routes)) {
-            hmapx_destroy(&updated_routes);
-            return EN_UNHANDLED;
-        }
-    }
-
-    HMAPX_FOR_EACH (hmapx_node,
-                    &learned_route_data->trk_data.trk_created_parsed_route) {
-        pr = hmapx_node->data;
-        handle_added_route(data, pr, &updated_routes);
-    }
-
-    /* Now we need to group the route_nodes based on if there are any routes
-     * left. */
-    HMAPX_FOR_EACH (hmapx_node, &updated_routes) {
-        struct group_ecmp_datapath *node = hmapx_node->data;
-        if (hmap_is_empty(&node->unique_routes) &&
-                hmap_is_empty(&node->ecmp_groups)) {
-            hmapx_add(&data->trk_data.deleted_datapath_routes, node);
-            hmap_remove(&data->datapaths, &node->hmap_node);
-        } else {
-            hmapx_add(&data->trk_data.crupdated_datapath_routes, node);
-        }
-    }
-
-    hmapx_destroy(&updated_routes);
-
-    if (!(hmapx_is_empty(&data->trk_data.crupdated_datapath_routes) &&
-          hmapx_is_empty(&data->trk_data.deleted_datapath_routes))) {
-        return EN_HANDLED_UPDATED;
-    }
-    return EN_HANDLED_UNCHANGED;
 }
 
 enum engine_input_handler_result

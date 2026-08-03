@@ -4855,7 +4855,7 @@ OVS_WAIT_FOR_OUTPUT_UNQUOTED([m_as ovn-gw-1 ovn-appctl evpn/remote-vtep-list | s
 IP: $ext_bgp_ip_gw1, port: 4789, vni: 10
 ])
 
-m_wait_row_count Learned_Route 1 ip_prefix=88.88.0.0/24
+m_wait_learned_route_count ovn-gw-1 1 ip_prefix=88.88.0.0/24
 
 OVS_WAIT_UNTIL([m_as ovn-gw-1 ip netns exec frr-ns ip route show vrf vrf-$vni | grep -q 30.0.1])
 OVS_WAIT_UNTIL([m_as ovn-gw-1 ip netns exec frr-ns ip vrf exec vrf-$vni ping    -c1 30.0.1.11])
