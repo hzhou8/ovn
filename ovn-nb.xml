@@ -1795,6 +1795,20 @@
         </column>
       </group>
 
+      <group title="Options for ports representing routers">
+        <column name="options" key="is_router"
+                type='{"type": "boolean"}'>
+          If set to <code>true</code>, indicate that this logical switch port
+          represents a logical router port, even when
+          <ref column="type"/> is not <code>router</code>.  CMS may set this
+          on ports such as <code>remote</code> LSPs that back LRPs in another
+          OVN interconnection zone.  OVN may use this hint wherever router
+          ports are handled specially; for example, such ports are omitted
+          from the <code>_MC_flood_l2</code> multicast group so IP multicast
+          is not flooded toward them.  Default: <code>false</code>.
+        </column>
+      </group>
+
     </group>
 
     <group title="Containers">

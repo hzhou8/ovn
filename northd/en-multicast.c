@@ -233,7 +233,10 @@ build_mcast_groups(struct multicast_igmp_data *data,
         if (lsp_is_enabled(op->nbsp) && lsp_can_receive_multicast(op->nbsp)) {
             ovn_multicast_add(&data->mcast_groups, &mc_flood, op);
 
-            if (!lsp_is_router(op->nbsp)) {
+            /* Omit type=router ports and ports with options:is_router=true
+             * from MC_FLOOD_L2 (same treatment as real router ports).
+             */
+            if (!lsp_is_router_for_mcast(op->nbsp)) {
                 ovn_multicast_add(&data->mcast_groups, &mc_flood_l2, op);
             }
 

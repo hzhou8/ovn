@@ -1155,6 +1155,17 @@ lsp_can_learn_mac(const struct nbrec_logical_switch_port *nbsp)
     return smap_get_bool(&nbsp->options, "lsp_learn_fdb", true);
 }
 
+/* True for type=router ports, and for ports marked options:is_router=true
+ * (LSP represents an LRP even if type is not "router").  Currently used to
+ * omit such ports from MC_FLOOD_L2.
+ */
+static inline bool
+lsp_is_router_for_mcast(const struct nbrec_logical_switch_port *nbsp)
+{
+    return lsp_is_router(nbsp)
+           || smap_get_bool(&nbsp->options, "is_router", false);
+}
+
 const char *lrp_find_member_ip(const struct ovn_port *op, const char *ip_s);
 
 /* This function returns true if 'op' is a gateway router port.

@@ -94,6 +94,9 @@ Post v26.03.0
    - Added a new "ovn-debug lflow-pipeline-oftable-start-list" command that
      prints the starting OpenFlow table number of the logical ingress and
      egress pipelines.
+   - northd: Add Logical_Switch_Port option "is_router" to mark an LSP as
+     representing a logical router port when type is not "router" (e.g. IC
+     remote LSPs).  Currently used to omit such ports from _MC_flood_l2.
 
 OVN v26.03.0 - xxx xx xxxx
 --------------------------
