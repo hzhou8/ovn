@@ -27,6 +27,11 @@ struct route_exchange_ctx_in {
 
     /* Contains struct advertise_datapath_entry */
     const struct hmap *announce_routes;
+
+    /* Contains struct nexthop_entry, the kernel nexthop objects used to
+     * resolve learned routes that reference their next hop through a nexthop
+     * id. */
+    const struct hmap *nexthops;
 };
 
 struct route_exchange_ctx_out {

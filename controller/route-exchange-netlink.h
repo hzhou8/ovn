@@ -57,7 +57,12 @@ void re_route_format(struct ds *, uint32_t table_id,
                      const struct in6_addr *dst, unsigned int plen,
                      const struct in6_addr *nexthop, int err);
 
+/* Syncs the routes OVN advertises in 'table_id' and collects the routes
+ * learned from it into 'learned_routes'.  'nexthops' contains the kernel
+ * nexthop objects (struct nexthop_entry) used to resolve learned routes that
+ * reference their next hop through a nexthop id. */
 int re_nl_sync_routes(uint32_t table_id, const struct hmap *routes,
+                      const struct hmap *nexthops,
                       struct vector *learned_routes);
 
 int re_nl_cleanup_routes(uint32_t table_id);

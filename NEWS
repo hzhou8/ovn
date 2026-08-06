@@ -34,6 +34,11 @@ Post v26.03.0
      "lb-add", "meter-add", "lr-policy-add", and "lr-policy-del", and
      fixed the "nfg-list" signature.
    - Dynamic Routing:
+     * Learn routes whose next hop is described by a kernel nexthop object
+       referenced through a nexthop id (RTA_NH_ID) instead of being encoded
+       inline in the route.  Nexthop groups are expanded into one learned
+       route per group member, and the learned routes are updated when the
+       nexthop object they reference changes.
      * Allow multiple routers to read the same VRF table.
      * Add support for hub-and-spoke propagation via the "hub-spoke" option
        in dynamic-routing-redistribute settings.

@@ -20982,6 +20982,61 @@ ip_prefix           : "10.10.3.1"
 ip_prefix           : "10.10.4.1"
 ])
 
+# A route can name its next hop through a kernel nexthop object instead of
+# carrying it inline.  The kernel does not report the route again when the
+# object it names changes, so ovn-controller has to watch the nexthop table.
+# Skip this part where nexthop objects are not available.
+if ip nexthop show > /dev/null 2>&1; then
+
+AS_BOX([$(date +%H:%M:%S.%03N) Learned route through a nexthop object])
+
+# Make the kernel describe the route through the nexthop id alone.  In
+# compatibility mode, which is the default, it reports the resolved next hop
+# inline as well and reannounces the route whenever the object changes, so the
+# nexthop table would not be what drives the relearning.
+compat_mode=$(sysctl -n net.ipv4.nexthop_compat_mode)
+on_exit "sysctl -wq net.ipv4.nexthop_compat_mode=$compat_mode"
+check sysctl -wq net.ipv4.nexthop_compat_mode=0
+
+nh_used=$(nexthop_alloc)
+check ip nexthop add id $nh_used via 20.0.0.25 dev local-bgp-port
+on_exit "ip nexthop del id $nh_used"
+check ip route add 10.10.5.1 nhid $nh_used vrf vrf-$vni proto zebra
+
+wait_row_count Learned_Route 1 ip_prefix=10.10.5.1 nexthop=20.0.0.25
+
+# How many times ovn-controller rebuilt the routes it learns.  A sync
+# completes only after it ran the engine, and it reads the notifications right
+# before running it, so a sync after a change to the nexthop table tells us
+# what it decided to do about that change.
+route_recomputes() {
+    ovn-appctl -t ovn-controller inc-engine/show-stats route_exchange recompute
+}
+
+# The steps above leave work behind that would otherwise land in the middle of
+# the measurements, wait for it to finish first.
+check ovn-nbctl --wait=hv sync
+OVS_WAIT_UNTIL([settled=$(route_recomputes); sleep 2;
+                test "$settled" = "$(route_recomputes)"])
+
+# Replacing the object the route names moves the route, even though the
+# kernel reports nothing about the route itself.  Relearning has to happen for
+# this change, waiting for the route to move would also accept it happening
+# later on for an unrelated reason.
+re_recompute=$(route_recomputes)
+check ip nexthop replace id $nh_used via 20.0.0.27 dev local-bgp-port
+check ovn-nbctl --wait=hv sync
+AT_CHECK([test $(route_recomputes) -gt $re_recompute])
+
+wait_row_count Learned_Route 1 ip_prefix=10.10.5.1 nexthop=20.0.0.27
+
+# Restore what the rest of the test expects to find.
+check ip route del 10.10.5.1 vrf vrf-$vni
+wait_row_count Learned_Route 0 ip_prefix=10.10.5.1
+check sysctl -wq net.ipv4.nexthop_compat_mode=$compat_mode
+
+fi
+
 # Verify that we can have one router read and another write from the same
 # vrf table.
 #
