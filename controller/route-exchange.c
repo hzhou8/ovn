@@ -341,7 +341,8 @@ route_exchange_run(const struct route_exchange_ctx_in *r_ctx_in,
             struct vector received_routes =
                 VECTOR_EMPTY_INITIALIZER(struct re_nl_received_route_node);
             error = re_nl_sync_routes(arte->table_id, arte->routes,
-                                      r_ctx_in->nexthops, &received_routes);
+                                      r_ctx_in->nexthops, &received_routes,
+                                      r_ctx_out->referenced_nhids);
             SET_ROUTE_EXCHANGE_NL_STATUS(error);
 
             struct ovsdb_idl_index *sbrec_learned_route_by_datapath =

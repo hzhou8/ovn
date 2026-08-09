@@ -202,6 +202,7 @@ test_route_sync(struct ovs_cmdl_context *ctx)
     }
 
     struct hmap routes_to_advertise = HMAP_INITIALIZER(&routes_to_advertise);
+    struct hmap referenced_nhids = HMAP_INITIALIZER(&referenced_nhids);
     struct hmap nexthops = HMAP_INITIALIZER(&nexthops);
     struct vector received_routes =
         VECTOR_EMPTY_INITIALIZER(struct re_nl_received_route_node);
@@ -237,7 +238,7 @@ test_route_sync(struct ovs_cmdl_context *ctx)
     nexthops_sync(&nexthops);
 
     ovs_assert(re_nl_sync_routes(table_id, &routes_to_advertise, &nexthops,
-                                 &received_routes) == 0);
+                                 &received_routes, &referenced_nhids) == 0);
 
     struct ds msg = DS_EMPTY_INITIALIZER;
 
@@ -254,6 +255,8 @@ done:
         free(e);
     }
     hmap_destroy(&routes_to_advertise);
+    nexthop_ids_clear(&referenced_nhids);
+    hmap_destroy(&referenced_nhids);
     nexthops_destroy(&nexthops);
     hmap_destroy(&nexthops);
     vector_destroy(&received_routes);
@@ -341,6 +344,40 @@ test_nexthop_table_notify(struct ovs_cmdl_context *ctx)
     ovn_netlink_notifiers_destroy();
 }
 
+/* Reports the kernel nexthop objects that the routes learned from 'table_id'
+ * depend on. */
+static void
+test_route_sync_nhids(struct ovs_cmdl_context *ctx)
+{
+    unsigned int table_id;
+
+    if (!test_read_uint_value(ctx, 1, "table id", &table_id)) {
+        return;
+    }
+
+    struct hmap routes_to_advertise = HMAP_INITIALIZER(&routes_to_advertise);
+    struct hmap referenced_nhids = HMAP_INITIALIZER(&referenced_nhids);
+    struct hmap nexthops = HMAP_INITIALIZER(&nexthops);
+    struct vector received_routes =
+        VECTOR_EMPTY_INITIALIZER(struct re_nl_received_route_node);
+
+    nexthops_sync(&nexthops);
+    ovs_assert(re_nl_sync_routes(table_id, &routes_to_advertise, &nexthops,
+                                 &received_routes, &referenced_nhids) == 0);
+
+    const struct nexthop_id_node *node;
+    HMAP_FOR_EACH (node, hmap_node, &referenced_nhids) {
+        printf("Referenced nexthop id=%"PRIu32"\n", node->id);
+    }
+
+    nexthop_ids_clear(&referenced_nhids);
+    hmap_destroy(&referenced_nhids);
+    nexthops_destroy(&nexthops);
+    hmap_destroy(&nexthops);
+    hmap_destroy(&routes_to_advertise);
+    vector_destroy(&received_routes);
+}
+
 /* Dumps the nexthop table after applying the changes caused by running
  * 'shell_command' to it.  Unlike "nexthop-sync", which builds the table from
  * scratch, this goes through the incremental update path. */
@@ -391,6 +428,7 @@ test_ovn_netlink(int argc, char *argv[])
          test_neighbor_table_notify, OVS_RO},
         {"host-if-monitor", NULL, 2, 3, test_host_if_monitor, OVS_RO},
         {"route-sync", NULL, 1, INT_MAX, test_route_sync, OVS_RO},
+        {"route-sync-nhids", NULL, 1, 1, test_route_sync_nhids, OVS_RO},
         {"route-table-notify", NULL, 1, 1,
          test_route_table_notify, OVS_RO},
         {"nexthop-sync", NULL, 0, 0, test_nexthop_sync, OVS_RO},

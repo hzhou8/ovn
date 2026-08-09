@@ -37,6 +37,11 @@ struct route_exchange_ctx_in {
 struct route_exchange_ctx_out {
     struct vector *route_table_watches;
     bool sb_changes_pending;
+
+    /* Collects the ids (struct nexthop_id_node) of the kernel nexthop objects
+     * the learned routes depend on.  A change to any other nexthop object
+     * cannot affect them. */
+    struct hmap *referenced_nhids;
 };
 
 void route_exchange_run(const struct route_exchange_ctx_in *,

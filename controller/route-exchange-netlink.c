@@ -226,13 +226,20 @@ learn_route_via_nexthop(const struct nexthop_entry *nhe,
 /* Resolves the kernel nexthop object identified by 'id' against 'nexthops'
  * and appends a learned route for the prefix in 'rd' to 'learned_routes' for
  * each usable next hop.  A nexthop group yields one learned route per
- * member. */
+ * member.
+ *
+ * Every nexthop id the route depends on is added to 'referenced_nhids', even
+ * the ones that cannot be resolved right now, so that the caller knows which
+ * changes to the kernel nexthop table may affect this route. */
 static void
 learn_routes_via_nexthop_id(const struct hmap *nexthops, uint32_t id,
                             const struct route_data *rd,
-                            struct vector *learned_routes)
+                            struct vector *learned_routes,
+                            struct hmap *referenced_nhids)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 20);
+
+    nexthop_ids_add(referenced_nhids, id);
 
     const struct nexthop_entry *nhe = nexthop_entry_find(nexthops, id);
     if (!nhe) {
@@ -247,6 +254,10 @@ learn_routes_via_nexthop_id(const struct hmap *nexthops, uint32_t id,
 
     for (size_t i = 0; i < nhe->n_grps; i++) {
         const struct nexthop_grp_entry *grp = &nhe->grps[i];
+
+        /* Replacing a member does not change the group itself, so the route
+         * depends on the members just as much as on the group. */
+        nexthop_ids_add(referenced_nhids, grp->id);
 
         /* The kernel does not allow a nexthop group to contain other groups,
          * so a single level of indirection is all we have to follow. */
@@ -270,6 +281,10 @@ struct route_msg_handle_data {
      * that reference their next hop(s) through a nexthop id (RTA_NH_ID).
      * Must be set whenever 'learned_routes' is. */
     const struct hmap *nexthops;
+
+    /* Collects the nexthop ids (struct nexthop_id_node) the learned routes
+     * depend on.  Must be set whenever 'learned_routes' is. */
+    struct hmap *referenced_nhids;
 };
 
 static void
@@ -306,7 +321,8 @@ handle_route_msg(const struct route_table_msg *msg,
             /* The next hop(s) are not encoded in the route itself, they are
              * described by a separate kernel nexthop object. */
             learn_routes_via_nexthop_id(handle_data->nexthops, rd->rta_nhid,
-                                        rd, handle_data->learned_routes);
+                                        rd, handle_data->learned_routes,
+                                        handle_data->referenced_nhids);
             return;
         }
         struct route_data_nexthop *nexthop;
@@ -394,7 +410,8 @@ re_nl_encode_nexthop(struct ofpbuf *request, bool dst_is_ipv4,
 int
 re_nl_sync_routes(uint32_t table_id, const struct hmap *routes,
                   const struct hmap *nexthops,
-                  struct vector *learned_routes)
+                  struct vector *learned_routes,
+                  struct hmap *referenced_nhids)
 {
     struct hmapx routes_to_advertise = HMAPX_INITIALIZER(&routes_to_advertise);
     struct vector stale_routes =
@@ -414,6 +431,7 @@ re_nl_sync_routes(uint32_t table_id, const struct hmap *routes,
         .learned_routes = learned_routes,
         .stale_routes = &stale_routes,
         .nexthops = nexthops,
+        .referenced_nhids = referenced_nhids,
     };
     route_table_dump_one_table(table_id, AF_INET, handle_route_msg, &data);
     route_table_dump_one_table(table_id, AF_INET6, handle_route_msg, &data);

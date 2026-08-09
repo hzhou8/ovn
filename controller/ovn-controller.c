@@ -5664,9 +5664,11 @@ struct ed_type_nexthop_exchange {
     bool users[NEXTHOP_EXCHANGE_USER_MAX];
     bool enabled;
     bool recompute;
-    /* True if the last run changed any nexthop that is not an EVPN FDB one,
-     * i.e. any nexthop a route may be referencing. */
-    bool routing_changed;
+    /* Ids (uint32_t) of the nexthops the last run changed. */
+    struct vector changed_ids;
+    /* True if the last run rebuilt the whole table, in which case
+     * 'changed_ids' is not usable as any nexthop may have changed. */
+    bool resynced;
 };
 
 static void nexthop_exchange_update(struct ed_type_nexthop_exchange *,
@@ -5678,6 +5680,9 @@ struct ed_type_route_exchange {
     /* Set to true when SB is readonly and we have routes that need
      * to be inserted into SB. */
     bool sb_changes_pending;
+    /* Ids (struct nexthop_id_node) of the kernel nexthop objects the routes
+     * learned during the last run depend on. */
+    struct hmap referenced_nhids;
 };
 
 static enum engine_node_state
@@ -5710,6 +5715,7 @@ en_route_exchange_run(struct engine_node *node, void *data)
     }
 
     vector_clear(&rt_notify->watches);
+    nexthop_ids_clear(&re->referenced_nhids);
 
     /* Routes we learn may reference their next hop through a nexthop id, which
      * we can only resolve while the kernel nexthop table is tracked. */
@@ -5726,6 +5732,7 @@ en_route_exchange_run(struct engine_node *node, void *data)
     struct route_exchange_ctx_out r_ctx_out = {
         .sb_changes_pending = false,
         .route_table_watches = &rt_notify->watches,
+        .referenced_nhids = &re->referenced_nhids,
     };
 
     route_exchange_run(&r_ctx_in, &r_ctx_out);
@@ -5737,20 +5744,28 @@ en_route_exchange_run(struct engine_node *node, void *data)
 }
 
 static enum engine_input_handler_result
-route_exchange_nexthop_handler(struct engine_node *node,
-                               void *data OVS_UNUSED)
+route_exchange_nexthop_handler(struct engine_node *node, void *data)
 {
+    struct ed_type_route_exchange *re = data;
     struct ed_type_nexthop_exchange *nhe_data =
         engine_get_input_data("nexthop_exchange", node);
 
-    /* Only the nexthops a route can reference through a nexthop id matter
-     * here, changes limited to the FDB nexthops used by EVPN cannot affect
-     * the routes we learn. */
-    if (!nhe_data->routing_changed) {
-        return EN_HANDLED_UNCHANGED;
+    /* The whole table was rebuilt, we cannot tell what changed in it. */
+    if (nhe_data->resynced) {
+        return EN_UNHANDLED;
     }
 
-    return EN_UNHANDLED;
+    /* Only the nexthop objects the routes we learned depend on can affect
+     * them.  Anything else, e.g. the FDB nexthops used by EVPN or the ones
+     * used by routes in tables we do not watch, is not worth a recompute. */
+    uint32_t id;
+    VECTOR_FOR_EACH (&nhe_data->changed_ids, id) {
+        if (nexthop_ids_contains(&re->referenced_nhids, id)) {
+            return EN_UNHANDLED;
+        }
+    }
+
+    return EN_HANDLED_UNCHANGED;
 }
 
 static enum engine_input_handler_result
@@ -5772,12 +5787,16 @@ en_route_exchange_init(struct engine_node *node OVS_UNUSED,
     struct ed_type_route_exchange *re = xzalloc(sizeof *re);
 
     re->sb_idl = arg->sb_idl;
+    hmap_init(&re->referenced_nhids);
     return re;
 }
 
 static void
-en_route_exchange_cleanup(void *data OVS_UNUSED)
+en_route_exchange_cleanup(void *data)
 {
+    struct ed_type_route_exchange *re = data;
+    nexthop_ids_clear(&re->referenced_nhids);
+    hmap_destroy(&re->referenced_nhids);
 }
 
 /* The route_table_notify node is an input node, but the watches are
@@ -6459,6 +6478,7 @@ en_nexthop_exchange_init(struct engine_node *node OVS_UNUSED,
     struct ed_type_nexthop_exchange *nhe_data = xmalloc(sizeof *nhe_data);
     *nhe_data = (struct ed_type_nexthop_exchange) {
         .nexthops = HMAP_INITIALIZER(&nhe_data->nexthops),
+        .changed_ids = VECTOR_EMPTY_INITIALIZER(uint32_t),
         .enabled = false,
         .recompute = true,
     };
@@ -6472,6 +6492,7 @@ en_nexthop_exchange_cleanup(void *data)
     struct ed_type_nexthop_exchange *nhe_data = data;
     nexthops_destroy(&nhe_data->nexthops);
     hmap_destroy(&nhe_data->nexthops);
+    vector_destroy(&nhe_data->changed_ids);
 }
 
 static enum engine_node_state
@@ -6483,6 +6504,9 @@ en_nexthop_exchange_run(struct engine_node *node OVS_UNUSED, void *data)
         return EN_UNCHANGED;
     }
 
+    vector_clear(&nhe_data->changed_ids);
+    nhe_data->resynced = false;
+
     if (nhe_data->recompute) {
         nexthops_destroy(&nhe_data->nexthops);
         nexthops_sync(&nhe_data->nexthops);
@@ -6491,19 +6515,15 @@ en_nexthop_exchange_run(struct engine_node *node OVS_UNUSED, void *data)
         ovn_netlink_notifier_flush(OVN_NL_NOTIFIER_NEXTHOP);
 
         nhe_data->recompute = false;
-        nhe_data->routing_changed = true;
+        nhe_data->resynced = true;
         return EN_UPDATED;
     }
 
     struct vector *msgs = ovn_netlink_get_msgs(OVN_NL_NOTIFIER_NEXTHOP);
 
-    nhe_data->routing_changed = false;
     const struct nh_table_msg *msg;
     VECTOR_FOR_EACH_PTR (msgs, msg) {
-        if (!msg->nhe->is_fdb) {
-            nhe_data->routing_changed = true;
-            break;
-        }
+        vector_push(&nhe_data->changed_ids, &msg->nhe->id);
     }
 
     bool updated = nexthops_handle_changes(&nhe_data->nexthops, msgs);
