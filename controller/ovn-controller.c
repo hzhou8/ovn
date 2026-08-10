@@ -5812,11 +5812,20 @@ en_route_table_notify_run(struct engine_node *node OVS_UNUSED, void *data)
     struct vector *msgs;
     uint32_t *table_id;
 
-    msgs = ovn_netlink_get_msgs(OVN_NL_NOTIFIER_ROUTE_V4);
-    VECTOR_FOR_EACH_PTR (msgs, table_id) {
-        if (vector_bsearch(&rtn->watches, table_id, table_id_cmp)) {
-            state = EN_UPDATED;
-            break;
+    /* We cannot tell whether a table we watch was among the changes we
+     * missed, so assume it was. */
+    if (ovn_netlink_notifier_lost(OVN_NL_NOTIFIER_ROUTE_V4) ||
+        ovn_netlink_notifier_lost(OVN_NL_NOTIFIER_ROUTE_V6)) {
+        state = EN_UPDATED;
+    }
+
+    if (state != EN_UPDATED) {
+        msgs = ovn_netlink_get_msgs(OVN_NL_NOTIFIER_ROUTE_V4);
+        VECTOR_FOR_EACH_PTR (msgs, table_id) {
+            if (vector_bsearch(&rtn->watches, table_id, table_id_cmp)) {
+                state = EN_UPDATED;
+                break;
+            }
         }
     }
 
@@ -6456,13 +6465,21 @@ en_neighbor_table_notify_run(struct engine_node *node OVS_UNUSED,
     struct vector *msgs;
     struct ne_table_msg *ne_msg;
 
-    msgs = ovn_netlink_get_msgs(OVN_NL_NOTIFIER_NEIGHBOR);
-    VECTOR_FOR_EACH_PTR (msgs, ne_msg) {
-        if (vector_bsearch(&ntn->watches,
-                           &ne_msg->nd.if_index,
-                           if_index_cmp)) {
-            state = EN_UPDATED;
-            break;
+    /* We cannot tell whether an interface we watch was among the changes we
+     * missed, so assume it was. */
+    if (ovn_netlink_notifier_lost(OVN_NL_NOTIFIER_NEIGHBOR)) {
+        state = EN_UPDATED;
+    }
+
+    if (state != EN_UPDATED) {
+        msgs = ovn_netlink_get_msgs(OVN_NL_NOTIFIER_NEIGHBOR);
+        VECTOR_FOR_EACH_PTR (msgs, ne_msg) {
+            if (vector_bsearch(&ntn->watches,
+                               &ne_msg->nd.if_index,
+                               if_index_cmp)) {
+                state = EN_UPDATED;
+                break;
+            }
         }
     }
 
@@ -6506,6 +6523,12 @@ en_nexthop_exchange_run(struct engine_node *node OVS_UNUSED, void *data)
 
     vector_clear(&nhe_data->changed_ids);
     nhe_data->resynced = false;
+
+    /* The messages we did get do not describe every change, so the table has
+     * to be read again to find out what it looks like now. */
+    if (ovn_netlink_notifier_lost(OVN_NL_NOTIFIER_NEXTHOP)) {
+        nhe_data->recompute = true;
+    }
 
     if (nhe_data->recompute) {
         nexthops_destroy(&nhe_data->nexthops);
