@@ -253,6 +253,102 @@ struct advertised_routes_entry {
     bool can_sync;
 };
 
+/* Records that 'ad' distributes routes into the table 'table_id', creating the
+ * entry for the table in 'advertised_routes' if it is the first datapath to do
+ * so.  Only one datapath may distribute routes into a table, any further one
+ * makes the table unusable. */
+static void
+advertised_routes_add(struct hmap *advertised_routes,
+                      const struct advertise_datapath_entry *ad,
+                      uint32_t table_id)
+{
+    struct advertised_routes_entry *entry = NULL;
+    uint32_t hash = maintained_route_table_hash(table_id);
+    HMAP_FOR_EACH_WITH_HASH (entry, node, hash, advertised_routes) {
+        if (entry->table_id == table_id) {
+            if (!hmap_is_empty(&ad->routes)) {
+                if (entry->routes && !hmap_is_empty(entry->routes)) {
+                    VLOG_WARN_RL(&rl,
+                                 "Multiple datapaths are distributing "
+                                 "routes on routing table %"PRIu32,
+                                 table_id);
+                    entry->can_sync = false;
+                } else {
+                    entry->routes = &ad->routes;
+                }
+            }
+            break;
+        }
+    }
+
+    if (entry == NULL) {
+        entry = xmalloc(sizeof *entry);
+        *entry = (struct advertised_routes_entry) {
+            .datapaths = HMAPX_INITIALIZER(&entry->datapaths),
+            .routes = &ad->routes,
+            .table_id = table_id,
+            .can_sync = true,
+        };
+        hmap_insert(advertised_routes, &entry->node, hash);
+    }
+
+    if (!entry->can_sync) {
+        return;
+    }
+
+    hmapx_add(&entry->datapaths, CONST_CAST(void *, ad->db));
+}
+
+static void
+advertised_routes_destroy(struct hmap *advertised_routes)
+{
+    struct advertised_routes_entry *arte;
+    HMAP_FOR_EACH_POP (arte, node, advertised_routes) {
+        hmapx_destroy(&arte->datapaths);
+        free(arte);
+    }
+    hmap_destroy(advertised_routes);
+}
+
+/* Turns 'learned_routes', the routes of a kernel routing table OVN may learn
+ * from, into Learned_Route rows of every datapath in 'datapaths'. */
+static void
+resolve_and_sync_learned_routes(
+    const struct hmap *learned_routes, const struct hmapx *datapaths,
+    const struct route_exchange_ctx_in *r_ctx_in,
+    struct route_exchange_ctx_out *r_ctx_out)
+{
+    struct vector received_routes =
+        VECTOR_EMPTY_INITIALIZER(struct re_nl_received_route_node);
+
+    const struct re_nl_cached_route *cr;
+    HMAP_FOR_EACH (cr, node, learned_routes) {
+        re_nl_resolve_route(cr->msg, r_ctx_in->nexthops, &received_routes,
+                            r_ctx_out->referenced_nhids);
+    }
+
+    struct hmapx_node *dp_node;
+    HMAPX_FOR_EACH (dp_node, datapaths) {
+        const struct sbrec_datapath_binding *db = dp_node->data;
+        struct advertise_datapath_entry *adpe =
+            advertise_datapath_find(r_ctx_in->announce_routes, db);
+        if (!adpe) {
+            VLOG_WARN_RL(&rl, "Cannot sync datapath binding "UUID_FMT", "
+                         "bound ports not found",
+                         UUID_ARGS(&db->header_.uuid));
+            continue;
+        }
+
+        sb_sync_learned_routes(&received_routes, db, &adpe->bound_ports,
+                               r_ctx_in->ovnsb_idl_txn,
+                               r_ctx_in->sbrec_port_binding_by_name,
+                               r_ctx_in->sbrec_learned_route_by_datapath,
+                               &r_ctx_out->sb_changes_pending);
+    }
+
+    vector_destroy(&received_routes);
+}
+
 void
 route_exchange_run(const struct route_exchange_ctx_in *r_ctx_in,
                    struct route_exchange_ctx_out *r_ctx_out)
@@ -297,82 +393,27 @@ route_exchange_run(const struct route_exchange_ctx_in *r_ctx_in,
             sset_find_and_delete(&old_maintained_vrfs, ad->vrf_name);
         }
 
-        struct advertised_routes_entry *entry = NULL;
-        uint32_t hash = maintained_route_table_hash(table_id);
-        HMAP_FOR_EACH_WITH_HASH (entry, node, hash, &advertised_routes) {
-            if (entry->table_id == table_id) {
-                if (!hmap_is_empty(&ad->routes)) {
-                    if (entry->routes && !hmap_is_empty(entry->routes)) {
-                        VLOG_WARN_RL(&rl,
-                                     "Multiple datapaths are distributing "
-                                     "routes on routing table %"PRIu32,
-                                     table_id);
-                        entry->can_sync = false;
-                    } else {
-                        entry->routes = &ad->routes;
-                    }
-                }
-                break;
-            }
-        }
+        advertised_routes_add(&advertised_routes, ad, table_id);
+    }
 
-        if (entry == NULL) {
-            entry = xmalloc(sizeof *entry);
-            *entry = (struct advertised_routes_entry) {
-                .datapaths = HMAPX_INITIALIZER(&entry->datapaths),
-                .routes = &ad->routes,
-                .table_id = table_id,
-                .can_sync = true,
-            };
-            hmap_insert(&advertised_routes, &entry->node, hash);
-        }
-
-        if (!entry->can_sync) {
+    struct hmap learned_routes = HMAP_INITIALIZER(&learned_routes);
+    struct advertised_routes_entry *arte;
+    HMAP_FOR_EACH (arte, node, &advertised_routes) {
+        maintained_route_table_add(arte->table_id);
+        if (!arte->can_sync) {
             continue;
         }
 
-        hmapx_add(&entry->datapaths, CONST_CAST(void *, ad->db));
+        error = re_nl_sync_routes(arte->table_id, arte->routes,
+                                  &learned_routes);
+        SET_ROUTE_EXCHANGE_NL_STATUS(error);
+
+        resolve_and_sync_learned_routes(&learned_routes, &arte->datapaths,
+                                        r_ctx_in, r_ctx_out);
+        vector_push(r_ctx_out->route_table_watches, &arte->table_id);
     }
-
-    struct advertised_routes_entry *arte;
-    HMAP_FOR_EACH_POP (arte, node, &advertised_routes) {
-        maintained_route_table_add(arte->table_id);
-        if (arte->can_sync) {
-            struct vector received_routes =
-                VECTOR_EMPTY_INITIALIZER(struct re_nl_received_route_node);
-            error = re_nl_sync_routes(arte->table_id, arte->routes,
-                                      r_ctx_in->nexthops, &received_routes,
-                                      r_ctx_out->referenced_nhids);
-            SET_ROUTE_EXCHANGE_NL_STATUS(error);
-
-            struct ovsdb_idl_index *sbrec_learned_route_by_datapath =
-                r_ctx_in->sbrec_learned_route_by_datapath;
-            struct hmapx_node *dp_node;
-            HMAPX_FOR_EACH (dp_node, &arte->datapaths) {
-                const struct sbrec_datapath_binding *db = dp_node->data;
-                struct advertise_datapath_entry *adpe =
-                    advertise_datapath_find(r_ctx_in->announce_routes,
-                                            db);
-                if (!adpe) {
-                    VLOG_WARN_RL(&rl, "Cannot sync datapath binding "
-                                 UUID_FMT", bound ports not found",
-                                 UUID_ARGS(&db->header_.uuid));
-                    continue;
-                }
-                sb_sync_learned_routes(&received_routes, db,
-                                       &adpe->bound_ports,
-                                       r_ctx_in->ovnsb_idl_txn,
-                                       r_ctx_in->sbrec_port_binding_by_name,
-                                       sbrec_learned_route_by_datapath,
-                                       &r_ctx_out->sb_changes_pending);
-            }
-            vector_push(r_ctx_out->route_table_watches, &arte->table_id);
-            vector_destroy(&received_routes);
-        }
-
-        hmapx_destroy(&arte->datapaths);
-        free(arte);
-    }
+    re_nl_cached_routes_clear(&learned_routes);
+    hmap_destroy(&learned_routes);
 
     /* Remove routes in tables previously maintained by us. */
     struct maintained_route_table_entry *mrt;
@@ -403,7 +444,7 @@ route_exchange_run(const struct route_exchange_ctx_in *r_ctx_in,
         sset_delete(&old_maintained_vrfs, SSET_NODE_FROM_NAME(vrf_name));
     }
     sset_destroy(&old_maintained_vrfs);
-    hmap_destroy(&advertised_routes);
+    advertised_routes_destroy(&advertised_routes);
 }
 
 void

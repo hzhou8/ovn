@@ -266,11 +266,103 @@ ovn_route_msg_format(struct ds *ds, const struct ovn_route_msg *msg)
     }
 }
 
-/* Appends a learned route for the prefix in 'rd' reachable through the leaf
+/* Returns true if 'msg' describes a route OVN may learn: one installed into
+ * its table by a dynamic routing protocol, rather than by OVN itself or by a
+ * user.  Protocol values above RTPROT_STATIC are the ones used by the dynamic
+ * routing protocols. */
+static bool
+route_is_learn_relevant(const struct ovn_route_msg *msg)
+{
+    return msg->protocol != RTPROT_OVN
+           && msg->protocol > RTPROT_STATIC
+           && !prefix_is_link_local(&msg->prefix, msg->plen);
+}
+
+/* Two routes for one prefix may differ only by their metric, so it is part of
+ * a route's identity. */
+static uint32_t
+cached_route_hash(const struct ovn_route_msg *msg)
+{
+    uint32_t hash = hash_bytes(&msg->prefix, sizeof msg->prefix, 0);
+
+    hash = hash_int(msg->plen, hash);
+    return hash_int(msg->priority, hash);
+}
+
+static struct re_nl_cached_route *
+cached_route_find(const struct hmap *routes, const struct ovn_route_msg *msg)
+{
+    struct re_nl_cached_route *cr;
+    HMAP_FOR_EACH_WITH_HASH (cr, node, cached_route_hash(msg), routes) {
+        if (cr->msg->plen == msg->plen
+            && cr->msg->priority == msg->priority
+            && ipv6_addr_equals(&cr->msg->prefix, &msg->prefix)) {
+            return cr;
+        }
+    }
+
+    return NULL;
+}
+
+/* Applies the change 'msg' to the routes cached for its table: a route
+ * reported as added replaces the one it has the identity of, a route reported
+ * as removed drops it.  Changes to routes OVN does not learn from are ignored.
+ *
+ * Returns true if 'routes' changed. */
+bool
+re_nl_cached_routes_apply(struct hmap *routes, const struct ovn_route_msg *msg)
+{
+    if (!route_is_learn_relevant(msg)) {
+        return false;
+    }
+
+    struct re_nl_cached_route *cr = cached_route_find(routes, msg);
+
+    if (msg->nlmsg_type == RTM_DELROUTE) {
+        if (!cr) {
+            return false;
+        }
+
+        hmap_remove(routes, &cr->node);
+        free(cr->msg);
+        free(cr);
+        return true;
+    }
+
+    if (cr) {
+        size_t size = ovn_route_msg_size(msg);
+        if (size == ovn_route_msg_size(cr->msg)
+            && !memcmp(cr->msg, msg, size)) {
+            return false;
+        }
+
+        free(cr->msg);
+        cr->msg = ovn_route_msg_clone(msg);
+        return true;
+    }
+
+    cr = xmalloc(sizeof *cr);
+    cr->msg = ovn_route_msg_clone(msg);
+    hmap_insert(routes, &cr->node, cached_route_hash(msg));
+
+    return true;
+}
+
+void
+re_nl_cached_routes_clear(struct hmap *routes)
+{
+    struct re_nl_cached_route *cr;
+    HMAP_FOR_EACH_POP (cr, node, routes) {
+        free(cr->msg);
+        free(cr);
+    }
+}
+
+/* Appends a learned route for the prefix in 'msg' reachable through the leaf
  * nexthop object 'nhe' to 'learned_routes'. */
 static void
 learn_route_via_nexthop(const struct nexthop_entry *nhe,
-                        const struct route_data *rd,
+                        const struct ovn_route_msg *msg,
                         struct vector *learned_routes)
 {
     if (ipv6_is_zero(&nhe->addr)) {
@@ -280,8 +372,8 @@ learn_route_via_nexthop(const struct nexthop_entry *nhe,
     }
 
     struct re_nl_received_route_node rr = (struct re_nl_received_route_node) {
-        .prefix = rd->rta_dst,
-        .plen = rd->rtm_dst_len,
+        .prefix = msg->prefix,
+        .plen = msg->plen,
         .nexthop = nhe->addr,
     };
     ovs_strlcpy(rr.ifname, nhe->ifname, sizeof rr.ifname);
@@ -290,7 +382,7 @@ learn_route_via_nexthop(const struct nexthop_entry *nhe,
 }
 
 /* Resolves the kernel nexthop object identified by 'id' against 'nexthops'
- * and appends a learned route for the prefix in 'rd' to 'learned_routes' for
+ * and appends a learned route for the prefix in 'msg' to 'learned_routes' for
  * each usable next hop.  A nexthop group yields one learned route per
  * member.
  *
@@ -299,7 +391,7 @@ learn_route_via_nexthop(const struct nexthop_entry *nhe,
  * changes to the kernel nexthop table may affect this route. */
 static void
 learn_routes_via_nexthop_id(const struct hmap *nexthops, uint32_t id,
-                            const struct route_data *rd,
+                            const struct ovn_route_msg *msg,
                             struct vector *learned_routes,
                             struct hmap *referenced_nhids)
 {
@@ -314,7 +406,7 @@ learn_routes_via_nexthop_id(const struct hmap *nexthops, uint32_t id,
     }
 
     if (!nhe->n_grps) {
-        learn_route_via_nexthop(nhe, rd, learned_routes);
+        learn_route_via_nexthop(nhe, msg, learned_routes);
         return;
     }
 
@@ -333,24 +425,53 @@ learn_routes_via_nexthop_id(const struct hmap *nexthops, uint32_t id,
             continue;
         }
 
-        learn_route_via_nexthop(grp->gateway, rd, learned_routes);
+        learn_route_via_nexthop(grp->gateway, msg, learned_routes);
+    }
+}
+
+void
+re_nl_resolve_route(const struct ovn_route_msg *msg,
+                    const struct hmap *nexthops,
+                    struct vector *learned_routes,
+                    struct hmap *referenced_nhids)
+{
+    if (msg->nhid) {
+        /* The next hop(s) are not encoded in the route itself, they are
+         * described by a separate kernel nexthop object. */
+        learn_routes_via_nexthop_id(nexthops, msg->nhid, msg, learned_routes,
+                                    referenced_nhids);
+        return;
+    }
+
+    for (size_t i = 0; i < msg->n_nexthops; i++) {
+        const struct ovn_route_nexthop *nh = &msg->nexthops[i];
+
+        if (ipv6_is_zero(&nh->addr)) {
+            /* This is most likely an address on the local link.  As we just
+             * want to learn remote routes we do not need it. */
+            continue;
+        }
+
+        struct re_nl_received_route_node rr;
+        rr = (struct re_nl_received_route_node) {
+            .prefix = msg->prefix,
+            .plen = msg->plen,
+            .nexthop = nh->addr,
+        };
+        ovs_strlcpy(rr.ifname, nh->ifname, sizeof rr.ifname);
+
+        vector_push(learned_routes, &rr);
     }
 }
 
 struct route_msg_handle_data {
     struct hmapx *routes_to_advertise;
-    struct vector *learned_routes;
     struct vector *stale_routes;
     const struct hmap *routes;
 
-    /* Kernel nexthop objects (struct nexthop_entry), used to resolve routes
-     * that reference their next hop(s) through a nexthop id (RTA_NH_ID).
-     * Must be set whenever 'learned_routes' is. */
-    const struct hmap *nexthops;
-
-    /* Collects the nexthop ids (struct nexthop_id_node) the learned routes
-     * depend on.  Must be set whenever 'learned_routes' is. */
-    struct hmap *referenced_nhids;
+    /* Routes of the table OVN may learn from (struct re_nl_cached_route),
+     * rebuilt from the dump.  NULL if the caller does not learn routes. */
+    struct hmap *learned_routes;
 };
 
 static void
@@ -369,46 +490,16 @@ handle_route_msg(const struct route_table_msg *msg,
         return;
     }
 
-    /* This route is not from us, learn it only if it's > RTPROT_STATIC,
-     * those protocol values are used by dynamic routing protocols.
-     * This should prevent us from learning static routes installed
-     * by users in the VRF. */
+    /* This route is not from us, so it is one we may learn. */
     if (rd->rtm_protocol != RTPROT_OVN) {
-        if (rd->rtm_protocol <= RTPROT_STATIC) {
-            return;
-        }
         if (!handle_data->learned_routes) {
             return;
         }
-        if (prefix_is_link_local(&rd->rta_dst, rd->rtm_dst_len)) {
-            return;
-        }
-        if (rd->rta_nhid) {
-            /* The next hop(s) are not encoded in the route itself, they are
-             * described by a separate kernel nexthop object. */
-            learn_routes_via_nexthop_id(handle_data->nexthops, rd->rta_nhid,
-                                        rd, handle_data->learned_routes,
-                                        handle_data->referenced_nhids);
-            return;
-        }
-        struct route_data_nexthop *nexthop;
-        LIST_FOR_EACH (nexthop, nexthop_node, &rd->nexthops) {
-            if (ipv6_is_zero(&nexthop->addr)) {
-                /* This is most likely an address on the local link.
-                 * As we just want to learn remote routes we do not need it.*/
-                continue;
-            }
-            struct re_nl_received_route_node rr;
-            rr = (struct re_nl_received_route_node) {
-                .prefix = rd->rta_dst,
-                .plen = rd->rtm_dst_len,
-                .nexthop = nexthop->addr,
-            };
-            memcpy(rr.ifname, nexthop->ifname, IFNAMSIZ);
-            rr.ifname[IFNAMSIZ] = '\0';
 
-            vector_push(handle_data->learned_routes, &rr);
-        }
+        struct ovn_route_msg *route_msg =
+            ovn_route_msg_from_route_data(RTM_NEWROUTE, rd);
+        re_nl_cached_routes_apply(handle_data->learned_routes, route_msg);
+        free(route_msg);
         return;
     }
 
@@ -475,9 +566,7 @@ re_nl_encode_nexthop(struct ofpbuf *request, bool dst_is_ipv4,
 
 int
 re_nl_sync_routes(uint32_t table_id, const struct hmap *routes,
-                  const struct hmap *nexthops,
-                  struct vector *learned_routes,
-                  struct hmap *referenced_nhids)
+                  struct hmap *learned_routes)
 {
     struct hmapx routes_to_advertise = HMAPX_INITIALIZER(&routes_to_advertise);
     struct vector stale_routes =
@@ -488,6 +577,12 @@ re_nl_sync_routes(uint32_t table_id, const struct hmap *routes,
         hmapx_add(&routes_to_advertise, ar);
     }
 
+    if (learned_routes) {
+        /* The dump below tells us about every route of the table, so whatever
+         * we knew about it is replaced. */
+        re_nl_cached_routes_clear(learned_routes);
+    }
+
     /* Remove routes from the system that are not in the routes hmap and
      * remove entries from routes hmap that match routes already installed
      * in the system. */
@@ -496,8 +591,6 @@ re_nl_sync_routes(uint32_t table_id, const struct hmap *routes,
         .routes_to_advertise = &routes_to_advertise,
         .learned_routes = learned_routes,
         .stale_routes = &stale_routes,
-        .nexthops = nexthops,
-        .referenced_nhids = referenced_nhids,
     };
     route_table_dump_one_table(table_id, AF_INET, handle_route_msg, &data);
     route_table_dump_one_table(table_id, AF_INET6, handle_route_msg, &data);
