@@ -5647,6 +5647,9 @@ struct ed_type_route_table_notify {
     /* Routes ('struct ovn_route_msg *', owned) the last run was told about,
      * limited to the tables in 'watches'. */
     struct vector changed_routes;
+    /* Set when notifications were missed, in which case 'changed_routes' does
+     * not describe everything that happened to the watched tables. */
+    bool resync;
 };
 
 static void
@@ -5694,32 +5697,42 @@ struct ed_type_route_exchange {
     /* Set to true when SB is readonly and we have routes that need
      * to be inserted into SB. */
     bool sb_changes_pending;
-    /* Ids (struct nexthop_id_node) of the kernel nexthop objects the routes
-     * learned during the last run depend on. */
-    struct hmap referenced_nhids;
+    /* What the last run learned from the kernel routing tables. */
+    struct route_exchange_state *state;
 };
+
+static void
+route_exchange_ctx_init(struct engine_node *node,
+                        struct route_exchange_ctx_in *r_ctx_in,
+                        struct route_exchange_ctx_out *r_ctx_out)
+{
+    struct ed_type_route *route_data = engine_get_input_data("route", node);
+    struct ed_type_nexthop_exchange *nhe_data =
+        engine_get_input_data("nexthop_exchange", node);
+
+    *r_ctx_in = (struct route_exchange_ctx_in) {
+        .ovnsb_idl_txn = engine_get_context()->ovnsb_idl_txn,
+        .sbrec_learned_route_by_datapath = engine_ovsdb_node_get_index(
+            engine_get_input("SB_learned_route", node), "datapath"),
+        .sbrec_port_binding_by_name = engine_ovsdb_node_get_index(
+            engine_get_input("SB_port_binding", node), "name"),
+        .announce_routes = &route_data->announce_routes,
+        .nexthops = &nhe_data->nexthops,
+    };
+    *r_ctx_out = (struct route_exchange_ctx_out) {
+        .sb_changes_pending = false,
+    };
+}
 
 static enum engine_node_state
 en_route_exchange_run(struct engine_node *node, void *data)
 {
     struct ed_type_route_exchange *re = data;
-
-    struct ovsdb_idl_index *sbrec_learned_route_by_datapath =
-        engine_ovsdb_node_get_index(
-            engine_get_input("SB_learned_route", node),
-            "datapath");
-
-    struct ovsdb_idl_index *sbrec_port_binding_by_name =
-        engine_ovsdb_node_get_index(
-                engine_get_input("SB_port_binding", node),
-                "name");
-
-    struct ed_type_route *route_data =
-        engine_get_input_data("route", node);
     struct ed_type_route_table_notify *rt_notify =
         engine_get_input_data("route_table_notify", node);
     struct ed_type_nexthop_exchange *nhe_data =
         engine_get_input_data("nexthop_exchange", node);
+    struct ed_type_route *route_data = engine_get_input_data("route", node);
 
     /* There can not actually be any routes to advertise unless we also have
      * the Learned_Route table, since they where introduced in the same
@@ -5729,32 +5742,56 @@ en_route_exchange_run(struct engine_node *node, void *data)
     }
 
     vector_clear(&rt_notify->watches);
-    nexthop_ids_clear(&re->referenced_nhids);
 
     /* Routes we learn may reference their next hop through a nexthop id, which
      * we can only resolve while the kernel nexthop table is tracked. */
     nexthop_exchange_update(nhe_data, NEXTHOP_EXCHANGE_USER_ROUTE,
                             !hmap_is_empty(&route_data->announce_routes));
 
-    struct route_exchange_ctx_in r_ctx_in = {
-        .ovnsb_idl_txn = engine_get_context()->ovnsb_idl_txn,
-        .sbrec_learned_route_by_datapath = sbrec_learned_route_by_datapath,
-        .sbrec_port_binding_by_name = sbrec_port_binding_by_name,
-        .announce_routes = &route_data->announce_routes,
-        .nexthops = &nhe_data->nexthops,
-    };
-    struct route_exchange_ctx_out r_ctx_out = {
-        .sb_changes_pending = false,
-        .route_table_watches = &rt_notify->watches,
-        .referenced_nhids = &re->referenced_nhids,
-    };
+    struct route_exchange_ctx_in r_ctx_in;
+    struct route_exchange_ctx_out r_ctx_out;
+    route_exchange_ctx_init(node, &r_ctx_in, &r_ctx_out);
+    r_ctx_out.route_table_watches = &rt_notify->watches;
 
-    route_exchange_run(&r_ctx_in, &r_ctx_out);
+    route_exchange_run(re->state, &r_ctx_in, &r_ctx_out);
     route_table_notify_update(&rt_notify->watches);
 
     re->sb_changes_pending = r_ctx_out.sb_changes_pending;
 
     return EN_UPDATED;
+}
+
+static enum engine_input_handler_result
+route_exchange_route_table_handler(struct engine_node *node, void *data)
+{
+    struct ed_type_route_exchange *re = data;
+    struct ed_type_route_table_notify *rt_notify =
+        engine_get_input_data("route_table_notify", node);
+
+    /* We were not told about every change, so the routes we know of are not
+     * necessarily the ones the kernel has. */
+    if (rt_notify->resync) {
+        return EN_UNHANDLED;
+    }
+
+    struct route_exchange_ctx_in r_ctx_in;
+    struct route_exchange_ctx_out r_ctx_out;
+    route_exchange_ctx_init(node, &r_ctx_in, &r_ctx_out);
+
+    switch (route_exchange_handle_route_changes(re->state, &r_ctx_in,
+                                                &r_ctx_out,
+                                                &rt_notify->changed_routes)) {
+    case ROUTE_EXCHANGE_UNHANDLED:
+        return EN_UNHANDLED;
+    case ROUTE_EXCHANGE_UNCHANGED:
+        return EN_HANDLED_UNCHANGED;
+    case ROUTE_EXCHANGE_UPDATED:
+        break;
+    }
+
+    re->sb_changes_pending |= r_ctx_out.sb_changes_pending;
+
+    return EN_HANDLED_UPDATED;
 }
 
 static enum engine_input_handler_result
@@ -5769,17 +5806,24 @@ route_exchange_nexthop_handler(struct engine_node *node, void *data)
         return EN_UNHANDLED;
     }
 
-    /* Only the nexthop objects the routes we learned depend on can affect
-     * them.  Anything else, e.g. the FDB nexthops used by EVPN or the ones
-     * used by routes in tables we do not watch, is not worth a recompute. */
-    uint32_t id;
-    VECTOR_FOR_EACH (&nhe_data->changed_ids, id) {
-        if (nexthop_ids_contains(&re->referenced_nhids, id)) {
-            return EN_UNHANDLED;
-        }
+    struct route_exchange_ctx_in r_ctx_in;
+    struct route_exchange_ctx_out r_ctx_out;
+    route_exchange_ctx_init(node, &r_ctx_in, &r_ctx_out);
+
+    switch (route_exchange_handle_nexthop_changes(re->state, &r_ctx_in,
+                                                  &r_ctx_out,
+                                                  &nhe_data->changed_ids)) {
+    case ROUTE_EXCHANGE_UNHANDLED:
+        return EN_UNHANDLED;
+    case ROUTE_EXCHANGE_UNCHANGED:
+        return EN_HANDLED_UNCHANGED;
+    case ROUTE_EXCHANGE_UPDATED:
+        break;
     }
 
-    return EN_HANDLED_UNCHANGED;
+    re->sb_changes_pending |= r_ctx_out.sb_changes_pending;
+
+    return EN_HANDLED_UPDATED;
 }
 
 static enum engine_input_handler_result
@@ -5801,7 +5845,7 @@ en_route_exchange_init(struct engine_node *node OVS_UNUSED,
     struct ed_type_route_exchange *re = xzalloc(sizeof *re);
 
     re->sb_idl = arg->sb_idl;
-    hmap_init(&re->referenced_nhids);
+    re->state = route_exchange_state_create();
     return re;
 }
 
@@ -5809,8 +5853,7 @@ static void
 en_route_exchange_cleanup(void *data)
 {
     struct ed_type_route_exchange *re = data;
-    nexthop_ids_clear(&re->referenced_nhids);
-    hmap_destroy(&re->referenced_nhids);
+    route_exchange_state_destroy(re->state);
 }
 
 /* The route_table_notify node is an input node, but the watches are
@@ -5828,11 +5871,13 @@ en_route_table_notify_run(struct engine_node *node OVS_UNUSED, void *data)
     struct ed_type_route_table_notify *rtn = data;
 
     route_table_notify_clear_changes(rtn);
+    rtn->resync = false;
 
     for (size_t i = 0; i < ARRAY_SIZE(route_notifiers); i++) {
         /* We cannot tell whether a table we watch was among the changes we
          * missed, so assume it was. */
         if (ovn_netlink_notifier_lost(route_notifiers[i])) {
+            rtn->resync = true;
             state = EN_UPDATED;
         }
 
@@ -7176,7 +7221,8 @@ inc_proc_ovn_controller_init(
                      engine_noop_handler);
     engine_add_input(&en_route_exchange, &en_sb_port_binding,
                      engine_noop_handler);
-    engine_add_input(&en_route_exchange, &en_route_table_notify, NULL);
+    engine_add_input(&en_route_exchange, &en_route_table_notify,
+                     route_exchange_route_table_handler);
     engine_add_input(&en_route_exchange, &en_route_exchange_status, NULL);
     /* Routes referencing a nexthop id have to be re-learned whenever the
      * nexthop object they point at changes, the route itself is not updated

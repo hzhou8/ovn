@@ -21029,15 +21029,28 @@ AT_CHECK_UNQUOTED([route_recomputes], [0], [$re_recompute
 ])
 
 # Replacing the object the route does name moves the route, even though the
-# kernel reports nothing about the route itself.  Relearning has to happen for
-# this change, waiting for the route to move would also accept it happening
-# later on for an unrelated reason.
+# kernel reports nothing about the route itself, and it does so with what
+# ovn-controller already knows about the table rather than by reading it
+# again.
 re_recompute=$(route_recomputes)
 check ip nexthop replace id $nh_used via 20.0.0.27 dev local-bgp-port
-check ovn-nbctl --wait=hv sync
-AT_CHECK([test $(route_recomputes) -gt $re_recompute])
-
 wait_row_count Learned_Route 1 ip_prefix=10.10.5.1 nexthop=20.0.0.27
+AT_CHECK_UNQUOTED([route_recomputes], [0], [$re_recompute
+])
+
+# A route appearing in the table, or leaving it, is picked up from the
+# notification alone as well.
+re_recompute=$(route_recomputes)
+check ip route add 10.10.6.1 nhid $nh_used vrf vrf-$vni proto zebra
+wait_row_count Learned_Route 1 ip_prefix=10.10.6.1 nexthop=20.0.0.27
+AT_CHECK_UNQUOTED([route_recomputes], [0], [$re_recompute
+])
+
+re_recompute=$(route_recomputes)
+check ip route del 10.10.6.1 vrf vrf-$vni
+wait_row_count Learned_Route 0 ip_prefix=10.10.6.1
+AT_CHECK_UNQUOTED([route_recomputes], [0], [$re_recompute
+])
 
 # Restore what the rest of the test expects to find.
 check ip route del 10.10.5.1 vrf vrf-$vni
