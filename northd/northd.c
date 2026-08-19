@@ -18572,12 +18572,21 @@ build_lrouter_nat_defrag_and_lb(
 
         /* Ingress DNAT (Priority 50/70).
          *
-         * Pass the traffic that is already established to the next table with
-         * proper flags set.
+         * Pass the traffic that was already load balanced to the next table
+         * with proper flags set.
+         *
+         * Note: conntrack reports the original direction of a connection as
+         * new until the first reply is seen.  Further forward packets of an
+         * already load balanced connection (e.g. the A and AAAA queries that
+         * glibc sends in parallel over a single UDP socket) are therefore
+         * ct.new even though they are DNAT-ed, so they have to be matched
+         * here as well.  Otherwise they would miss the skip_snat/force_snat
+         * flags: the ct.new flows that match on the VIP cannot match them
+         * anymore because their destination has already been rewritten.
          */
         ds_clear(match);
 
-        ds_put_cstr(match, "ct.est && !ct.rel && !ct.new && !ct.rpl && "
+        ds_put_cstr(match, "(ct.est || ct.new) && !ct.rel && !ct.rpl && "
                            "ct_mark.natted");
         match_len = match->length;
 

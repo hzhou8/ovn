@@ -2843,11 +2843,12 @@ flows do not get programmed for load balancers with IPv6 *VIPs*.
   ``skip_snat`` and ``force_snat`` flags, setting the ``flags.force_snat_for_lb
   = 1`` or ``flags.skip_snat_for_lb = 1`` accordingly.
 
-- For the established traffic, a priority 50 flow that matches ``ct.est &&
-  !ct.rel && !ct.new && ct_mark.natted`` with an action of ``next;``, if the
-  router has load balancer assigned to it. Along with two priority 70 flows that
-  match ``skip_snat`` and ``force_snat`` flags, setting the
-  ``flags.force_snat_for_lb = 1`` or ``flags.skip_snat_for_lb = 1`` accordingly.
+- For the traffic that was already load balanced, a priority 50 flow that
+  matches ``(ct.est || ct.new) && !ct.rel && !ct.rpl && ct_mark.natted`` with an
+  action of ``next;``, if the router has load balancer assigned to it. Along
+  with two priority 70 flows that match ``skip_snat`` and ``force_snat`` flags,
+  setting the ``flags.force_snat_for_lb = 1`` or ``flags.skip_snat_for_lb = 1``
+  accordingly.
 
 **Ingress Table 9: DNAT on Gateway Routers**
 
