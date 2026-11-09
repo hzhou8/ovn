@@ -85,6 +85,7 @@ struct physical_ctx {
 };
 
 void physical_register_ovs_idl(struct ovsdb_idl *);
+void physical_set_mc_chunk_max(size_t bytes);
 void physical_run(struct physical_ctx *,
                   struct ovn_desired_flow_table *);
 void physical_handle_mc_group_changes(struct physical_ctx *,

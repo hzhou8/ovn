@@ -144,6 +144,7 @@ enum mff_log_flags_bits {
     MLF_RECIRC_BIT = 24,
     MLF_EVPN_LOOKUP_BIT = 25,
     MLF_POST_NF_LOOP_BACK_BIT = 26,
+    MLF_MC_CHUNK_BIT = 27,
     MLF_NETWORK_ID_START_BIT = 28,
     MLF_NETWORK_ID_END_BIT = 31,
 };
@@ -223,6 +224,10 @@ enum mff_log_flags {
 
     /* Set on a post-NF packet going back to the original ingress port. */
     MLF_POST_NF_LOOP_BACK = (1 << MLF_POST_NF_LOOP_BACK_BIT),
+
+    /* Set on a multicast flood that was split across several OpenFlow
+     * flows, for the table lookup of the next chunk only. */
+    MLF_MC_CHUNK = (1 << MLF_MC_CHUNK_BIT),
 
     /* Assign network ID to packet to choose correct network for snat when
      * lb_force_snat_ip=router_ip. */

@@ -1553,6 +1553,17 @@
         multicast group includes a logical port or ports on the local
         hypervisor, then its actions also resubmit to
         <code>OFTABLE_LOCAL_OUTPUT</code>.
+        A multicast group carries one set of actions per destination, and
+        a large enough group outgrows the <code>FLOW_MOD</code> message
+        that has to carry them.  Such a group is installed as several
+        flows instead, in this table or in
+        <code>OFTABLE_LOCAL_OUTPUT</code>, each holding one slice of the
+        outputs and, except the last, ending in a <code>resubmit</code>
+        back to the same table.  The next slice is found by an id carried
+        in <code>reg0</code>, with <code>MLF_MC_CHUNK</code> marking that
+        lookup.  <code>reg0</code> is saved on the stack across it, and
+        <code>MLF_MC_CHUNK</code> cleared, before a slice runs the egress
+        pipeline.
         <code>OFTABLE_REMOTE_OUTPUT</code> also includes:
       </p>
 

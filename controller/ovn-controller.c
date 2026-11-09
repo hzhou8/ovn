@@ -127,6 +127,7 @@ static unixctl_cb_func debug_dump_lflow_conj_ids;
 static unixctl_cb_func lflow_cache_flush_cmd;
 static unixctl_cb_func lflow_cache_show_stats_cmd;
 static unixctl_cb_func debug_delay_nb_cfg_report;
+static unixctl_cb_func debug_set_mc_chunk_max;
 
 #define DEFAULT_BRIDGE_NAME "br-int"
 #define DEFAULT_DATAPATH "system"
@@ -8455,6 +8456,8 @@ main(int argc, char *argv[])
     unsigned int delay_nb_cfg_report = 0;
     unixctl_command_register("debug/delay-nb-cfg-report", "SECONDS", 1, 1,
                              debug_delay_nb_cfg_report, &delay_nb_cfg_report);
+    unixctl_command_register("debug/set-mc-chunk-max", "BYTES", 1, 1,
+                             debug_set_mc_chunk_max, NULL);
 
     unixctl_command_register("debug/dump-local-bindings", "", 0, 0,
                              debug_dump_local_bindings,
@@ -9579,6 +9582,25 @@ debug_status_execution(struct unixctl_conn *conn, int argc OVS_UNUSED,
     } else {
         unixctl_command_reply(conn, "running");
     }
+}
+
+/* Lowers the number of encoded OpenFlow action bytes a multicast flood is
+ * allowed to put in one flow, so that a test can split a small group.
+ * Zero restores the default. */
+static void
+debug_set_mc_chunk_max(struct unixctl_conn *conn, int argc OVS_UNUSED,
+                       const char *argv[], void *arg OVS_UNUSED)
+{
+    unsigned int bytes;
+
+    if (!str_to_uint(argv[1], 10, &bytes)) {
+        unixctl_command_reply_error(conn, "unsigned integer required");
+        return;
+    }
+
+    physical_set_mc_chunk_max(bytes);
+    engine_set_force_recompute();
+    unixctl_command_reply(conn, NULL);
 }
 
 static void

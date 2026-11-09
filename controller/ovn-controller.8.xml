@@ -1078,6 +1078,13 @@
         debugging.
       </dd>
 
+      <dt><code>debug/set-mc-chunk-max</code> <var>bytes</var></dt>
+      <dd>
+        Sets how many encoded OpenFlow action bytes a multicast flood may
+        put in one flow before it is split across several, for testing.
+        Zero restores the default.
+      </dd>
+
       <dt><code>debug/resume</code></dt>
       <dd>
         Resumes a processing loop paused by <code>debug/pause</code>.

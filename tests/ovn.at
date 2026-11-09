@@ -47356,6 +47356,80 @@ AT_CLEANUP
 ])
 
 OVN_FOR_EACH_NORTHD([
+AT_SETUP([broadcast to many remote ports reaches every port])
+ovn_start
+net_add n1
+sim_add hv1
+as hv1
+ovs-vsctl add-br br-phys
+ovn_attach n1 br-phys 192.168.0.11 16
+
+dnl Tunnels to a chassis in another availability zone are only built when
+dnl this chassis is an interconnection gateway.
+check ovs-vsctl set open . external_ids:ovn-is-interconn=true
+
+dnl A type=remote port models a port in another availability zone.  Unlike
+dnl a port on a peer chassis in this zone, it cannot share an output with
+dnl its neighbours: the remote zone has no copy of this multicast group, so
+dnl the destination's own tunnel key has to go into the Geneve option.  Each
+dnl one therefore costs three field writes plus an output, some 80 bytes of
+dnl OpenFlow, so a flood outgrows its FLOW_MOD somewhere past 800 ports and
+dnl is discarded whole.  Rather than create that many, shrink the budget so
+dnl that a few dozen ports are enough to split, and enough to chain.
+as hv1 ovs-appctl -t ovn-controller debug/set-mc-chunk-max 4096
+N=120
+
+check ovn-sbctl chassis-add rch geneve 192.168.0.12 \
+    -- set chassis rch other_config:is-remote=true
+
+check ovn-nbctl ls-add ls1
+check ovn-nbctl lsp-add ls1 vif-local \
+    -- lsp-set-addresses vif-local "f0:00:00:00:00:01"
+check ovs-vsctl add-port br-int vif-local \
+    -- set Interface vif-local external-ids:iface-id=vif-local
+
+dnl Every remote port is encapsulated to individually, so they can all sit
+dnl behind one remote chassis.
+nbctl_cmd=""
+for i in $(seq 1 $N); do
+    hi=$(printf "%02x" $(($i / 256))); lo=$(printf "%02x" $(($i % 256)))
+    nbctl_cmd="$nbctl_cmd -- lsp-add ls1 rp-$i"
+    nbctl_cmd="$nbctl_cmd -- lsp-set-type rp-$i remote"
+    nbctl_cmd="$nbctl_cmd -- lsp-set-options rp-$i requested-chassis=rch"
+    nbctl_cmd="$nbctl_cmd -- lsp-set-addresses rp-$i \"f0:00:01:00:$hi:$lo\""
+done
+eval check ovn-nbctl $nbctl_cmd
+check ovn-nbctl --wait=sb sync
+
+dnl Resolve the tunnel next hop so the outputs actually encapsulate.
+as hv1 ovs-appctl tnl/neigh/set br-phys 192.168.0.12 f0:00:02:00:00:01
+OVS_WAIT_UNTIL([as hv1 ovs-vsctl list-ports br-int | grep -q '^ovn-rch'])
+check ovn-nbctl --wait=hv sync
+
+dnl The flood did not fit one flow, so it was split across a chain of them.
+AT_CHECK([test $(as hv1 ovs-ofctl dump-flows br-int table=OFTABLE_REMOTE_OUTPUT |
+                 grep -c 'reg15=0x8000') -ge 3])
+
+dnl Nothing was dropped for being too big to install.
+AT_CHECK([grep "FLOW_MOD message is too big" hv1/ovn-controller.log], [1])
+
+in_ofport=$(as hv1 ovs-vsctl get Interface vif-local ofport)
+flow="in_port=$in_ofport,dl_src=f0:00:00:00:00:01,dl_dst=ff:ff:ff:ff:ff:ff,arp,arp_op=1,arp_spa=10.0.0.1,arp_tpa=10.0.0.250,arp_sha=f0:00:00:00:00:01,arp_tha=ff:ff:ff:ff:ff:ff"
+AT_CHECK([as hv1 ovs-appctl ofproto/trace br-int "$flow"], [0], [stdout])
+
+AT_CHECK([grep "Translation failed" stdout], [1])
+AT_CHECK([grep "over 4096 resubmit" stdout], [1])
+dnl Every remote port is encapsulated to across the slices.  They share one
+dnl tunnel, so the destinations are told apart by the Geneve option that
+dnl carries the destination's own tunnel key.
+AT_CHECK([test $(grep -o 'len=4,0x[[0-9a-f]]*' stdout |
+                 sort -u | wc -l) -eq $N])
+
+OVN_CLEANUP([hv1])
+AT_CLEANUP
+])
+
+OVN_FOR_EACH_NORTHD([
 AT_SETUP([Port security - VRRPv3 ARP/ND])
 CHECK_SCAPY
 ovn_start
